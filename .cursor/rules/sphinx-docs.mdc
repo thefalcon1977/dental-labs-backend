@@ -1,0 +1,50 @@
+---
+alwaysApply: true
+---
+
+# Sphinx Documentation - Guidelines
+
+## Purpose
+- Keep docs consistent, buildable, and easy to navigate.
+- Avoid drifting docs: every change that affects behavior should update docs.
+
+## Location and Structure
+- Place docs under `docs/`.
+- Keep a clear entry point (`index.rst` or `index.md`).
+- Organize by topic: getting-started, configuration, operations, API usage, troubleshooting.
+- Add new pages to a toctree so they appear in nav.
+
+## Style and Formatting
+- Prefer reStructuredText (`.rst`); if using MyST/Markdown, keep consistent per section.
+- Use meaningful headings; one H1 per page.
+- Use `.. code-block:: <lang>` with a language hint (e.g., `bash`, `python`, `toml`).
+- Use admonitions for important notes: `.. note::`, `.. warning::`, `.. tip::`.
+- Avoid hard-coding versions; reference `apps.core.version.__version__` in examples if shown.
+
+## Cross-References
+- Use Sphinx roles for internal links: ``:ref:`target` ``.
+- Link to settings with clear paths (e.g., `config/settings/settings.toml`).
+- Prefer relative links within `docs/`; avoid raw GitHub URLs unless necessary.
+
+## API and Configuration Docs
+- When adding/altering behaviors:
+  - Update related sections in configuration docs.
+  - Document new settings (name, type, default, required/optional).
+  - Note backward-compatibility and migration steps if relevant.
+- Keep examples minimal but runnable; avoid fictional secrets/PII.
+
+## Builds and Validation
+- Ensure `make html` (or the project’s doc build command) succeeds before merge.
+- Fix warnings; don’t ignore broken refs or missing toctree entries.
+
+## Writing Pitfalls to Avoid
+- No secrets/tokens in snippets.
+- Don’t duplicate content across pages; link or ref instead.
+- Keep line length reasonable; wrap long paragraphs.
+- Don’t paste large logs; summarize and link to runbooks if needed.
+
+## Checklist Before Merging Doc Changes
+- Added to toctree/nav.
+- Code blocks have language specified.
+- No secrets/PII in text or examples.
+- Build succeeds without warnings.

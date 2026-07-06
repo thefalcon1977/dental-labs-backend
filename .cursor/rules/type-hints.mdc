@@ -1,0 +1,737 @@
+---
+alwaysApply: true
+---
+
+# Type Hints - Best Practices and Standards
+
+## Type Hints Requirements
+
+### Always Use Type Hints
+- **All functions** must have type hints for parameters and return types
+- **All class attributes** should have type hints
+- **All variables** in public APIs should have type hints
+- **Type hints are mandatory** - not optional
+
+### Use Named Types (Type Aliases)
+- **Always use type aliases** for complex types with generic parameters
+- **Never use inline patterns** like `dict[str, int]` or `list[Item]` in function signatures
+- **Rule**: If a type contains `[...]` (generic parameters), it MUST be a type alias
+- Example:
+  ```python
+  # ✅ GOOD - Type alias
+  UserDataDict: TypeAlias = dict[str, int]
+  def process(data: UserDataDict) -> None: ...
+
+  # ❌ BAD - Inline pattern (forbidden)
+  def process(data: dict[str, int]) -> None: ...
+  ```
+
+### Python 3.12+ Syntax
+- Use modern Python 3.12+ type hint syntax
+- Prefer built-in types over `typing` module when possible
+- **Use type aliases for complex types** - Don't use inline patterns
+- Example:
+  ```python
+  # ✅ GOOD - Named type alias
+  from typing import TypeAlias
+
+  DataDict: TypeAlias = dict[str, int]
+  StringList: TypeAlias = list[str]
+
+  def process_data(data: DataDict) -> StringList:
+      return [str(v) for v in data.values()]
+
+  # ❌ BAD - Inline pattern (avoid)
+  def process_data(data: dict[str, int]) -> list[str]:
+      return [str(v) for v in data.values()]
+
+  # ❌ BAD - Old syntax
+  from typing import Dict, List
+  def process_data(data: Dict[str, int]) -> List[str]:
+      return [str(v) for v in data.values()]
+  ```
+
+## Type Aliases and Named Types
+
+### Use Type Aliases for Complex Types
+- **Always use type aliases** instead of inline patterns like `dict[str, int]` or `list[str]`
+- **Rule**: If a type has generic parameters (e.g., `dict[...]`, `list[...]`, `tuple[...]`), you MUST use a type alias
+- Define type aliases at module level or in a `types.py` module
+- Use descriptive names that explain the purpose
+- Use `TypeAlias` annotation for clarity (Python 3.12+)
+- Example:
+  ```python
+  from typing import TypeAlias
+
+  # ✅ GOOD - Named type aliases (required for complex types)
+  UserDataDict: TypeAlias = dict[str, int]
+  ItemList: TypeAlias = list[Item]
+  ErrorDict: TypeAlias = dict[str, str]
+  StringList: TypeAlias = list[str]
+  UserTuple: TypeAlias = tuple[str, int, bool]
+  NestedDict: TypeAlias = dict[str, list[int]]
+
+  def process_data(data: UserDataDict) -> StringList:
+      """Process user data."""
+      return [str(v) for v in data.values()]
+
+  # ❌ BAD - Inline patterns (forbidden)
+  def process_data(data: dict[str, int]) -> list[str]:
+      return [str(v) for v in data.values()]
+
+  # ❌ BAD - Nested inline patterns (forbidden)
+  def process_data(data: dict[str, list[int]]) -> list[str]:
+      return []
+  ```
+
+### Type Alias Naming
+- Use descriptive names ending with the type (e.g., `UserDataDict`, `ItemList`, `ErrorDict`)
+- Use PascalCase for type aliases
+- Follow pattern: `{Purpose}{Type}` (e.g., `UserDataDict`, `ItemList`, `ErrorDict`)
+- Place in `apps/{app_name}/types.py` or at top of module
+- Example:
+  ```python
+  # apps/users/types.py
+  """Type aliases for user module."""
+
+  from typing import TypeAlias
+
+  # Simple type aliases (optional, for clarity)
+  UserId: TypeAlias = str
+  UserEmail: TypeAlias = str
+
+  # Complex type aliases (required)
+  UserDataDict: TypeAlias = dict[str, str | int | None]
+  UserList: TypeAlias = list["User"]
+  UserDict: TypeAlias = dict[str, "User"]
+  UserResponseList: TypeAlias = list["UserResponse"]
+  UserListResult: TypeAlias = tuple[UserList, int]
+  ```
+
+### When to Use Type Aliases
+
+#### ✅ MUST Use Type Aliases For:
+- **All `dict[...]` types**: `dict[str, int]` → `UserDataDict: TypeAlias = dict[str, int]`
+- **All `list[...]` types**: `list[Item]` → `ItemList: TypeAlias = list[Item]`
+- **All `tuple[...]` types**: `tuple[str, int]` → `UserTuple: TypeAlias = tuple[str, int]`
+- **All `set[...]` types**: `set[str]` → `StringSet: TypeAlias = set[str]`
+- **Nested types**: `dict[str, list[int]]` → `NestedDict: TypeAlias = dict[str, list[int]]`
+- **Complex unions with collections**: `list[User] | None` → `UserListOrNone: TypeAlias = list[User] | None`
+
+#### ✅ SHOULD Use Type Aliases For:
+- **Repeated types**: If used in multiple places
+- **Better readability**: Makes function signatures clearer
+- **Union types with models**: `User | None` → `UserOrNone: TypeAlias = User | None`
+
+#### ❌ DON'T Use Type Aliases For:
+- **Simple primitives**: `str`, `int`, `bool` (unless for semantic clarity)
+- **Simple unions of primitives**: `str | None` is fine inline
+- **Single use simple types**: If only used once and very simple
+
+### Type Alias Organization
+- Create `apps/{app_name}/types.py` for app-specific type aliases
+- Group related aliases together
+- Export from `__init__.py` if needed
+- Example:
+  ```python
+  # apps/users/types.py
+  """Type aliases for user module."""
+
+  from typing import TypeAlias
+
+  from . import models, schemas
+
+  # Schema aliases
+  UserCreate: TypeAlias = schemas.UserCreate
+  UserUpdate: TypeAlias = schemas.UserUpdate
+  UserResponse: TypeAlias = schemas.UserResponse
+
+  # Model aliases
+  User: TypeAlias = models.User
+  UserList: TypeAlias = list[User]
+
+  # Collection aliases
+  UserDataDict: TypeAlias = dict[str, str | int | None]
+  UserResponseList: TypeAlias = list[UserResponse]
+  UserListResult: TypeAlias = tuple[UserList, int]
+
+  # Union aliases
+  UserOrNone: TypeAlias = User | None
+  UserResponseOrNone: TypeAlias = UserResponse | None
+  ```
+
+## Type Hint Syntax
+
+### Union Types
+- Use `|` instead of `Optional` or `Union`
+- Use type aliases for complex unions
+- Example:
+  ```python
+  from typing import TypeAlias
+
+  # ✅ GOOD - Named type alias
+  UserOrNone: TypeAlias = User | None
+
+  def get_user(user_id: str) -> UserOrNone:
+      pass
+
+  # ✅ GOOD - Simple union (no alias needed)
+  def get_user(user_id: str | None) -> User | None:
+      pass
+
+  # ❌ BAD - Old syntax
+  from typing import Optional
+  def get_user(user_id: Optional[str]) -> Optional[User]:
+      pass
+  ```
+
+### Collection Types
+- Use built-in types: `list`, `dict`, `tuple`, `set`
+- **Always use type aliases for collections** - Never use inline patterns
+- Example:
+  ```python
+  from typing import TypeAlias
+
+  # ✅ GOOD - Named type aliases (required)
+  ItemList: TypeAlias = list[Item]
+  ItemCountDict: TypeAlias = dict[str, int]
+  ItemTuple: TypeAlias = tuple[str, int]
+
+  def process_items(items: ItemList) -> ItemCountDict:
+      return {item.id: item.count for item in items}
+
+  # ❌ BAD - Inline patterns (forbidden)
+  def process_items(items: list[Item]) -> dict[str, int]:
+      return {item.id: item.count for item in items}
+
+  # ❌ BAD - Old syntax
+  from typing import List, Dict
+  def process_items(items: List[Item]) -> Dict[str, int]:
+      return {item.id: item.count for item in items}
+  ```
+
+### Generic Types
+- Use built-in generics: `list[T]`, `dict[K, V]`, `tuple[T, ...]`
+- Use type aliases for generic types when they appear in function signatures
+- For generic functions, type aliases are optional but recommended for clarity
+- Example:
+  ```python
+  from typing import TypeVar, TypeAlias
+
+  T = TypeVar("T")
+
+  # ✅ GOOD - Generic function (T | None is fine for generics)
+  def get_first(items: list[T]) -> T | None:
+      return items[0] if items else None
+
+  # ✅ GOOD - Type alias for specific generic usage
+  ItemList: TypeAlias = list[T]
+
+  def get_first(items: ItemList[T]) -> T | None:
+      return items[0] if items else None
+  ```
+
+## Function Type Hints
+
+### Function Parameters
+- Always type all parameters
+- Include default values when present
+- Example:
+  ```python
+  async def create_user(
+      db: AsyncSession,
+      user_data: UserCreate,
+      send_email: bool = True,
+  ) -> User:
+      """Create user with type hints."""
+      pass
+  ```
+
+### Return Types
+- Always specify return type
+- Use `None` for functions that don't return
+- Use `-> None` explicitly
+- Example:
+  ```python
+  async def process_order(order_id: str) -> Order | None:
+      """Process order and return result."""
+      pass
+
+  def log_event(event: str) -> None:
+      """Log event (no return value)."""
+      pass
+  ```
+
+### Async Functions
+- Always type async functions
+- Return type is the actual return value, not `Coroutine`
+- Use type aliases for complex return types
+- Example:
+  ```python
+  from typing import TypeAlias, Any
+
+  # ✅ GOOD - Named type alias
+  JsonData: TypeAlias = dict[str, Any]
+
+  async def fetch_data(url: str) -> JsonData:
+      """Fetch data from URL."""
+      response = await http_client.get(url)
+      return response.json()
+
+  # ❌ BAD - Inline pattern (avoid)
+  async def fetch_data(url: str) -> dict[str, Any]:
+      """Fetch data from URL."""
+      response = await http_client.get(url)
+      return response.json()
+  ```
+
+## Class Type Hints
+
+### Class Attributes
+- Type all class attributes
+- Use `Mapped` for SQLAlchemy model fields
+- Example:
+  ```python
+  from sqlalchemy.orm import Mapped, mapped_column
+  from sqlalchemy import String
+
+  class User(Base):
+      id: Mapped[str] = mapped_column(String(36), primary_key=True)
+      email: Mapped[str] = mapped_column(String(255))
+      name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+  ```
+
+### Class Methods
+- Type all class methods
+- Include `self` or `cls` parameter (no type needed)
+- Example:
+  ```python
+  class UserService:
+      async def get_user(self, user_id: str) -> User | None:
+          """Get user by ID."""
+          pass
+
+      @classmethod
+      async def create_user(cls, user_data: UserCreate) -> User:
+          """Create user."""
+          pass
+  ```
+
+## Advanced Type Hints
+
+### TYPE_CHECKING for Forward References
+- Use `TYPE_CHECKING` for forward references
+- Prevents circular imports
+- Example:
+  ```python
+  from typing import TYPE_CHECKING
+
+  if TYPE_CHECKING:
+      from apps.orders.models import Order
+
+  class User(Base):
+      def get_orders(self) -> list["Order"]:
+          """Get user orders."""
+          pass
+  ```
+
+### Protocol for Structural Typing
+- Use `Protocol` for duck typing
+- Example:
+  ```python
+  from typing import Protocol
+
+  class Cacheable(Protocol):
+      def get(self, key: str) -> str | None: ...
+      def set(self, key: str, value: str) -> None: ...
+
+  def use_cache(cache: Cacheable) -> None:
+      cache.set("key", "value")
+  ```
+
+### Literal Types
+- Use `Literal` for specific values
+- Example:
+  ```python
+  from typing import Literal
+
+  def set_status(status: Literal["active", "inactive", "pending"]) -> None:
+      """Set status to specific value."""
+      pass
+  ```
+
+### TypedDict
+- Use `TypedDict` for structured dictionaries
+- Example:
+  ```python
+  from typing import TypedDict
+
+  class UserData(TypedDict):
+      id: str
+      email: str
+      name: str | None
+
+  def process_user_data(data: UserData) -> None:
+      """Process typed dictionary."""
+      pass
+  ```
+
+## FastAPI-Specific Type Hints
+
+### Route Handlers
+- Always type route handlers
+- Return type should match `response_model`
+- Example:
+  ```python
+  @router.get("/users/{user_id}", response_model=UserResponse)
+  async def get_user(user_id: str) -> UserResponse:
+      """Get user by ID."""
+      pass
+  ```
+
+### Dependencies
+- Type all dependencies
+- Use `Depends` with typed functions
+- Example:
+  ```python
+  from fastapi import Depends
+  from sqlalchemy.ext.asyncio import AsyncSession
+
+  async def get_db() -> AsyncSession:
+      """Database dependency."""
+      pass
+
+  # ✅ GOOD - Use type alias
+  UserResponseList: TypeAlias = list[UserResponse]
+
+  @router.get("/users")
+  async def list_users(db: AsyncSession = Depends(get_db)) -> UserResponseList:
+      """List users."""
+      pass
+
+  # ❌ BAD - Inline pattern (avoid)
+  @router.get("/users")
+  async def list_users(db: AsyncSession = Depends(get_db)) -> list[UserResponse]:
+      """List users."""
+      pass
+  ```
+
+### Request/Response Types
+- Type request and response objects
+- Example:
+  ```python
+  from fastapi import Request
+  from fastapi.responses import ORJSONResponse
+
+  @router.post("/users")
+  async def create_user(
+      request: Request,
+      user_data: UserCreate,
+  ) -> ORJSONResponse:
+      """Create user."""
+      return ORJSONResponse(
+          content={"id": user.id},
+          status_code=status.HTTP_201_CREATED,
+      )
+  ```
+
+## Repository Pattern Type Hints
+
+### DAL Functions
+- Type all DAL functions
+- Return model types, not schemas
+- Example:
+  ```python
+  from sqlalchemy.ext.asyncio import AsyncSession
+
+  async def get_user_by_id(
+      db: AsyncSession,
+      user_id: str,
+  ) -> models.User | None:
+      """Get user by ID."""
+      pass
+
+  # ✅ GOOD - Use type alias
+  UserList: TypeAlias = list[models.User]
+  UserListResult: TypeAlias = tuple[UserList, int]
+
+  async def list_users(
+      db: AsyncSession,
+      pagination: PaginationParams,
+  ) -> UserListResult:
+      """List users with pagination."""
+      pass
+
+  # ❌ BAD - Inline pattern (avoid)
+  async def list_users(
+      db: AsyncSession,
+      pagination: PaginationParams,
+  ) -> tuple[list[models.User], int]:
+      """List users with pagination."""
+      pass
+  ```
+
+### BLL Functions
+- Type all BLL functions
+- Return model types
+- Example:
+  ```python
+  async def create_user(
+      db: AsyncSession,
+      user_data: schemas.UserCreate,
+  ) -> models.User:
+      """Create user with business logic."""
+      pass
+  ```
+
+### Service Functions
+- Type all service functions
+- Return schema types
+- Example:
+  ```python
+  async def get_user(
+      db: AsyncSession,
+      user_id: str,
+  ) -> schemas.UserResponse | None:
+      """Get user by ID."""
+      pass
+  ```
+
+## Type Hints Best Practices
+
+### ✅ DO
+- ✅ Always use type hints for functions
+- ✅ Use Python 3.12+ syntax (`str | None` not `Optional[str]`)
+- ✅ **Use type aliases for complex types** (`dict[str, int]`, `list[Item]`)
+- ✅ Type all parameters and return values
+- ✅ Use `TYPE_CHECKING` for forward references
+- ✅ Type class attributes
+- ✅ Use specific types (not `Any` unless necessary)
+- ✅ Use `Protocol` for structural typing
+- ✅ Document complex types in docstrings
+- ✅ Place type aliases in `types.py` or at module level
+
+### ❌ DON'T
+- ❌ Don't skip type hints
+- ❌ **Don't use inline patterns** like `dict[str, int]` or `list[str]` (use type aliases)
+- ❌ Don't use `Any` unless absolutely necessary
+- ❌ Don't use old `typing` module syntax when built-in works
+- ❌ Don't use `Optional` (use `| None`)
+- ❌ Don't use `Union` (use `|`)
+- ❌ Don't use `List`, `Dict`, `Tuple` (use `list`, `dict`, `tuple`)
+- ❌ Don't forget to type return values
+- ❌ Don't use untyped variables in public APIs
+- ❌ Don't create type aliases for simple types (`str`, `int`, `bool`)
+
+## Type Checking
+
+### mypy Configuration
+- Use mypy for type checking
+- Run: `mypy apps/ config/ main.py`
+- Configuration in `pyproject.toml` or `mypy.ini`
+- Example:
+  ```ini
+  [mypy]
+  python_version = 3.12
+  ignore_missing_imports = true
+  no_strict_optional = true
+  ```
+
+### Type Checking in CI/CD
+- Run type checking in CI/CD pipeline
+- Fail builds on type errors
+- Use `mypy --strict` for critical code
+
+## Common Patterns
+
+### Optional Parameters
+```python
+from typing import TypeAlias, Any
+
+# ✅ GOOD - Use type aliases
+DataDict: TypeAlias = dict[str, Any]
+OptionsDict: TypeAlias = dict[str, Any]
+StringList: TypeAlias = list[str]
+
+def process_data(
+    data: DataDict,
+    options: OptionsDict | None = None,
+) -> StringList:
+    """Process data with optional options."""
+    options = options or {}
+    return [str(v) for v in data.values()]
+
+# ❌ BAD - Inline patterns (avoid)
+def process_data(
+    data: dict[str, Any],
+    options: dict[str, Any] | None = None,
+) -> list[str]:
+    """Process data with optional options."""
+    options = options or {}
+    return [str(v) for v in data.values()]
+```
+
+### Callable Types
+```python
+from collections.abc import Callable
+
+def apply_function(
+    func: Callable[[str], int],
+    value: str,
+) -> int:
+    """Apply function to value."""
+    return func(value)
+```
+
+### Async Context Managers
+```python
+from collections.abc import AsyncContextManager
+
+async def use_resource(
+    resource: AsyncContextManager[Database],
+) -> None:
+    """Use async context manager."""
+    async with resource:
+        pass
+```
+
+### Generic Functions
+```python
+from typing import TypeVar, TypeAlias
+
+T = TypeVar("T")
+
+# ✅ GOOD - Generic with type alias for return
+ItemList: TypeAlias = list[T]
+ItemOrNone: TypeAlias = T | None
+
+def get_first(items: ItemList[T]) -> ItemOrNone[T]:
+    """Get first item from list."""
+    return items[0] if items else None
+
+# ✅ GOOD - Simple generic (no alias needed)
+def get_first(items: list[T]) -> T | None:
+    """Get first item from list."""
+    return items[0] if items else None
+```
+
+## Examples
+
+### Complete Example: Typed Service
+```python
+"""User service with complete type hints."""
+
+from typing import TypeAlias
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from .. import models, schemas
+from ..repository import dal, bll
+from apps.core.utils import PaginationParams, PaginatedResponse
+
+# Type aliases for better readability
+UserResponse: TypeAlias = schemas.UserResponse
+UserResponseOrNone: TypeAlias = UserResponse | None
+UserList: TypeAlias = list[models.User]
+UserListResult: TypeAlias = tuple[UserList, int]
+
+async def get_user(
+    db: AsyncSession,
+    user_id: str,
+) -> UserResponseOrNone:
+    """Get user by ID.
+
+    Args:
+        db: Database session
+        user_id: User identifier
+
+    Returns:
+        User response or None if not found
+    """
+    user = await dal.get_user_by_id(db, user_id)
+    if user:
+        return UserResponse.model_validate(user)
+    return None
+
+async def create_user(
+    db: AsyncSession,
+    user_data: schemas.UserCreate,
+) -> UserResponse:
+    """Create user.
+
+    Args:
+        db: Database session
+        user_data: User creation data
+
+    Returns:
+        Created user response
+    """
+    user = await bll.create_user(db, user_data)
+    return UserResponse.model_validate(user)
+
+async def list_users(
+    db: AsyncSession,
+    pagination: PaginationParams,
+) -> PaginatedResponse[UserResponse]:
+    """List users with pagination.
+
+    Args:
+        db: Database session
+        pagination: Pagination parameters
+
+    Returns:
+        Paginated response with users
+    """
+    users, total_items = await dal.list_users(db, pagination)
+
+    items = [
+        UserResponse.model_validate(user)
+        for user in users
+    ]
+
+    return PaginatedResponse.create(
+        items=items,
+        page=pagination.page,
+        page_size=pagination.page_size,
+        total_items=total_items,
+    )
+```
+
+### Type Aliases File Example
+```python
+# apps/users/types.py
+"""Type aliases for user module."""
+
+from typing import TypeAlias
+
+from . import models, schemas
+
+# Schema type aliases
+UserCreate: TypeAlias = schemas.UserCreate
+UserUpdate: TypeAlias = schemas.UserUpdate
+UserResponse: TypeAlias = schemas.UserResponse
+UserResponseOrNone: TypeAlias = UserResponse | None
+
+# Model type aliases
+User: TypeAlias = models.User
+UserOrNone: TypeAlias = User | None
+UserList: TypeAlias = list[User]
+
+# Collection type aliases
+UserDataDict: TypeAlias = dict[str, str | int | None]
+UserResponseList: TypeAlias = list[UserResponse]
+UserListResult: TypeAlias = tuple[UserList, int]
+
+__all__ = [
+    "UserCreate",
+    "UserUpdate",
+    "UserResponse",
+    "UserResponseOrNone",
+    "User",
+    "UserOrNone",
+    "UserList",
+    "UserDataDict",
+    "UserResponseList",
+    "UserListResult",
+]
+```

@@ -1,0 +1,215 @@
+---
+description: Async CSV export standards (Postgres COPY, cursor paging, streaming, ETA headers)
+alwaysApply: true
+---
+
+# CSV Export (DB-native streaming)
+
+This repository exports CSV using **Postgres-native streaming** and **fully async** FastAPI responses. Use these rules whenever you add or modify any “export CSV” behavior.
+
+## Non-negotiables
+
+- **Use Postgres `COPY (SELECT ...) TO STDOUT`** for exports (DB-native CSV streaming). Do not build CSV rows in Python for large datasets.
+- **Never use `LIMIT/OFFSET` pagination** for exports. If you must segment work, use **cursor/keyset pagination**.
+- **The response must stream** (do not buffer the full file in memory or on disk).
+- **Fully async only**: async DB calls + async generator streaming; no blocking I/O in request path.
+
+## Preferred DB pattern: `COPY (SELECT ...) TO STDOUT`
+
+- **Shape**:
+  - `COPY ( <optimized SELECT> ) TO STDOUT WITH (FORMAT csv, HEADER true)`
+- **Driver guidance (async)**:
+  - Prefer `asyncpg` for COPY streaming: `Connection.copy_from_query(..., output=..., format="csv", header=True)`.
+  - `copy_from_query()` issues `COPY (...) TO STDOUT` under the hood and streams chunks to `output`.
+- **CSV correctness**:
+  - Always define a deterministic column list; avoid `SELECT *`.
+  - Use explicit casts/formatting only when required; prefer raw columns.
+- **Security**:
+  - Never interpolate user input into SQL strings. Use bind parameters.
+  - Only allowlisted columns/filters may influence the query.
+
+### Chunking without OFFSET (cursor/keyset)
+
+`COPY` streams an entire query result. For **very large exports** or **resume support**, segment the export into multiple `COPY` operations using keyset pagination.
+
+- **Stable order is required**:
+  - Order by an indexed, monotonic-ish column plus a tiebreaker: `ORDER BY created_at, id`
+- **Cursor filter**:
+  - `WHERE (created_at, id) > (:cursor_created_at, :cursor_id)`
+- **Segment size**:
+  - Use a `LIMIT :batch_size` only inside each keyset-segmented query (this is not OFFSET pagination).
+- **CSV header**:
+  - Send `HEADER true` only for the first segment; subsequent segments must be `HEADER false`.
+
+## Batch handling best practices
+
+### Batch size defaults (guidelines)
+
+- **Low volume** (\(< 100k rows\) or \(< 50MB\) typical): single `COPY` is fine.
+- **Large volume**: segment with keyset cursoring.
+  - Start with **50k–250k rows per segment** and tune based on latency/DB load.
+  - Keep each segment’s DB work time bounded (target < 5–15s) to reduce long-held snapshots.
+
+### Backpressure + memory
+
+- Stream **bytes** as they are produced by the DB driver.
+- Do not accumulate CSV content in memory.
+- Prefer a small, bounded queue (if needed) between DB copy and HTTP streaming.
+
+### Cancellation + cleanup
+
+- Handle client disconnects/cancellation by stopping the stream and releasing DB connections promptly.
+- Always close/return the underlying connection to the pool in `finally`.
+
+## Query optimization requirements
+
+### SELECT design
+
+- **Select only required columns** (no `*`).
+- Ensure filters are **sargable** (avoid wrapping indexed columns in functions).
+- Avoid `ORDER BY` unless required for cursoring/determinism.
+- For joins:
+  - Join only what you must; prefer pre-filtered subqueries/CTEs when it helps the planner.
+  - Ensure join keys are indexed.
+
+### Indexing + cursor fields
+
+- Cursor-based exports must use an index aligned with the sort/filter, e.g.:
+  - `(created_at, id)` or `(tenant_id, created_at, id)` depending on tenancy scoping.
+
+### Validate plans
+
+- For export queries, obtain and review query plans during development:
+  - Use `EXPLAIN (ANALYZE, BUFFERS)` locally/staging, not on production hot paths.
+- Enforce bounded behavior:
+  - Consider `SET LOCAL statement_timeout = '...'` for export connections.
+
+## HTTP streaming response standards
+
+### Response type and headers
+
+- Use `StreamingResponse` with an **async iterator** yielding `bytes`.
+- Required headers:
+  - `Content-Type: text/csv; charset=utf-8`
+  - `Content-Disposition: attachment; filename="<safe_name>.csv"`
+  - `Cache-Control: no-store`
+- Recommended headers (estimation/observability):
+  - `X-Export-Estimated-Rows`: integer (if available)
+  - `X-Export-Estimated-Seconds`: integer seconds (best-effort)
+  - `X-Export-Estimate-Method`: one of `count`, `explain`, `heuristic`, `unknown`
+  - `X-Export-Cursor-Fields`: e.g. `created_at,id` (when chunked)
+
+### Must include an estimate (best practice)
+
+Before the first byte is streamed, compute a **best-effort ETA** and set it in headers.
+
+- **Low volume**:
+  - Prefer an exact `COUNT(*)` using the same filters (only if it’s known to be cheap).
+- **Large volume**:
+  - Do **not** run `COUNT(*)`. Use `EXPLAIN (FORMAT JSON)` (or a cheap heuristic) to estimate rows/cost.
+- Always label the approach via `X-Export-Estimate-Method`.
+
+## FastAPI endpoint documentation requirements
+
+- Every export endpoint must include `summary` and `description`.
+- The `description` must include **complexity**:
+  - `Time: O(n) · Space: O(1) server-side (streaming)`
+  - If chunked: `Time: O(n) · Space: O(1)`, with `n = rows exported`.
+
+## Async implementation sketch (reference pattern)
+
+Use this as a guideline for structure (router → service → repository). Adjust names to your app.
+
+```python
+from __future__ import annotations
+
+import asyncio
+import contextlib
+from collections.abc import AsyncIterator
+from typing import TypeAlias
+
+from fastapi import APIRouter, Depends, status
+from fastapi.responses import StreamingResponse
+import asyncpg
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from apps.core.db import get_db
+
+router = APIRouter()
+
+Chunk: TypeAlias = bytes
+QueueItem: TypeAlias = Chunk | None
+
+
+@router.get(
+    "/exports/tickets.csv",
+    status_code=status.HTTP_200_OK,
+    summary="Export tickets as CSV",
+    description=(
+        "Stream tickets as CSV using Postgres COPY TO STDOUT. "
+        "Time: O(n) · Space: O(1)"
+    ),
+)
+async def export_tickets_csv(
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    """Export tickets as a streamed CSV attachment."""
+
+    async def stream() -> AsyncIterator[Chunk]:
+        queue: asyncio.Queue[QueueItem] = asyncio.Queue(maxsize=8)
+
+        # IMPORTANT: acquire an asyncpg connection from your pool/engine here.
+        con: asyncpg.Connection = ...
+
+        async def output(data: bytes) -> None:
+            # asyncpg may pass `bytearray` in some versions; normalize to bytes.
+            await queue.put(bytes(data))
+
+        async def run_copy() -> None:
+            try:
+                await con.copy_from_query(
+                    "SELECT id, created_at FROM tickets ORDER BY created_at, id",
+                    output=output,
+                    format="csv",
+                    header=True,
+                )
+            finally:
+                await queue.put(None)
+
+        task = asyncio.create_task(run_copy())
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                yield item
+        finally:
+            task.cancel()
+            with contextlib.suppress(Exception):
+                await task
+
+    headers = {
+        "Content-Disposition": 'attachment; filename="tickets.csv"',
+        "Cache-Control": "no-store",
+        # Best practice: add X-Export-Estimated-* headers here (pre-stream).
+    }
+    return StreamingResponse(stream(), media_type="text/csv; charset=utf-8", headers=headers)
+```
+
+## Low vs large volume rules of thumb
+
+- **Low volume**:
+  - Single `COPY` is acceptable.
+  - Exact `COUNT(*)` estimate is acceptable if it’s cheap.
+- **Large volume**:
+  - Segment with keyset cursoring to keep each DB operation bounded.
+  - Avoid exact counts; use plan-based or heuristic estimates.
+  - Keep transaction/snapshot time short; release connections promptly.
+
+## Anti-patterns (do not do these)
+
+- Building CSV rows in Python for large exports (high CPU/memory, slow).
+- `LIMIT/OFFSET` paging (slow for large offsets, unstable with concurrent writes).
+- Loading the full export into memory or writing temp files during the request.
+- Unbounded result sets without streaming.
+- Non-deterministic ordering when cursoring (breaks resume/segmentation).

@@ -1,0 +1,267 @@
+---
+alwaysApply: true
+---
+
+# Global Rules - Project Standards
+
+## Project Overview
+This is a production-ready FastAPI microservices template with:
+- Fully async architecture (Python 3.12+)
+- SQLAlchemy 2.0 with async sessions
+- Multi-app architecture with automatic router discovery
+- Structured logging with structlog/loguru
+- Type safety with full type hints
+- Dependency injection patterns (no globals)
+- Dynaconf for configuration management
+
+## Code Quality Standards
+
+### Type Hints
+- **Always use type hints** for all functions, classes, and public APIs
+- Use Python 3.12+ syntax (`str | None`, `list[T]`, `dict[K, V]`)
+- **Use type aliases** for complex types (see `type-hints.mdc`)
+- Never use inline patterns like `dict[str, int]` in function signatures
+
+### Docstrings
+- **Always include docstrings** for all functions, classes, and modules
+- Use Google-style docstrings with Args, Returns, Raises sections
+- See `docstrings.mdc` for detailed standards
+
+### Code Formatting
+- **Line length**: 88 characters (Black default)
+- **Formatting**: Black for code formatting
+- **Linting**: Ruff for linting
+- **Import sorting**: isort with Black profile
+- **Type checking**: mypy with `--ignore-missing-imports --no-strict-optional`
+
+## Architecture
+
+### Project Structure
+- Follow layered architecture pattern (see `architecture.mdc`)
+- Each app in `apps/{app_name}/` with: models, schemas, services, repository, routers, tests
+- Repository pattern: DAL (read) and BLL (write) separation
+- Core shared functionality in `apps/core/`
+- Configuration in `config/`
+
+### Layer Rules
+- **Routers** → call Services → call BLL/DAL
+- **Never skip layers** (e.g., router calling DAL directly)
+- **Never mix responsibilities** between layers
+- See `architecture.mdc` for detailed structure
+
+## FastAPI Standards
+
+### Response Types
+- **Always use `ORJSONResponse`** instead of default `Response`
+- Import: `from fastapi.responses import ORJSONResponse`
+- Never use `from fastapi.responses import Response`
+
+### Caching & Idempotency (Approval First)
+- **Always ask before implementing caching** (any kind: Redis/application/HTTP caching).
+- **Always ask before implementing idempotency** (e.g., `Idempotency-Key` flows, idempotency tables/records, or middleware).
+- Rationale: These are cross-cutting behaviors with operational and data-consistency implications; we only add them with explicit product/ops agreement.
+
+### Error Handling
+- **Always raise exceptions**, never return error responses
+- Use custom exceptions from `apps.core.exceptions`
+- Each app must have its own exception hierarchy
+- See `fastapi-error-handling.mdc` for details
+
+### Database
+- **Always use async sessions** (`AsyncSession`)
+- **Always use dependency injection** (`Depends(get_db)`)
+- Follow repository pattern: DAL for reads, BLL for writes
+- Use SQL-level pagination
+- See `fastapi-database.mdc` for details
+
+## Logging
+
+### Logging Standards
+- Use structured logging: `logger.info("message", key=value)`
+- Log at critical points only (don't impact performance)
+- Use appropriate log levels (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+- See `fastapi-logging.mdc` for detailed standards
+
+## Testing
+
+### Test Requirements
+- All endpoints must have tests
+- Test both success and error cases
+- Use pytest with pytest-asyncio
+- See `fastapi-testing.mdc` for patterns
+
+## Commit Messages
+
+### Commitizen Style
+- **Always provide a commit message** at the end of each response when making changes
+- Use Commitizen conventional commit format
+- Format: `<type>(<scope>): <subject>`
+- Types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `chore`, `build`, `ci`
+- Examples:
+  ```
+  feat(api): add user registration endpoint
+  fix(database): resolve connection pool leak
+  docs(rules): add type hints standards
+  refactor(services): improve error handling
+  ```
+
+### Commit Message Rules
+- **Subject line**: 50 characters or less, imperative mood
+- **Body** (optional): Explain what and why, wrap at 72 characters
+- **Footer** (optional): Reference issues, breaking changes
+- Example:
+  ```
+  feat(users): add email validation
+
+  Add email format validation to user registration endpoint.
+  Uses Pydantic EmailStr for validation.
+
+  Closes #123
+  ```
+
+### When to Provide Commit Messages
+- ✅ After creating new files
+- ✅ After modifying existing files
+- ✅ After refactoring code
+- ✅ After adding features
+- ✅ After fixing bugs
+- ✅ After updating documentation
+
+## Changelog
+- Maintain `CHANGELOG.md` (or release notes) when user-facing behavior changes.
+- Record: summary of change, impact, migration/upgrade notes, and links to ADR/PR if relevant.
+- Group entries per release or date; keep the latest changes easy to find.
+
+## README.md Standards
+
+### Purpose and Scope
+- **Business-focused, non-technical** - README.md should contain general information, not technical details
+- **Update with business changes** - Update when business requirements, features, or project purpose changes
+- **Keep it concise** - Must be as small as possible while remaining useful
+- **Guide stakeholders** - Help business users, product managers, and non-technical stakeholders understand the project
+
+### Required Sections (Minimal)
+- **Project Title and Brief Description** - What this project is and its purpose (business perspective)
+- **What It Does** - High-level description of what the project accomplishes
+- **Who It's For** - Target users or stakeholders
+- **Key Features** - Business value and capabilities (3-5 items max, non-technical)
+- **Getting Started** - Simple, non-technical steps to get started
+- **Documentation** - Link to technical documentation location
+
+### Content Guidelines
+- ✅ **Be general and non-technical** - Focus on business value, not implementation
+- ✅ **Use plain language** - Avoid technical jargon, code examples, or technical details
+- ✅ **Link to technical docs** - Reference `.cursor/rules/` and `docs/` for technical details
+- ✅ **Update with business changes** - Update when features, requirements, or business purpose changes
+- ✅ **Focus on "what" and "why"** - Not "how" (technical implementation)
+
+### Structure Template
+```markdown
+# Project Name
+Brief one-line description of what this project does (business perspective).
+
+## What It Does
+High-level description of the project's purpose and what it accomplishes.
+
+## Who It's For
+Description of target users, stakeholders, or use cases.
+
+## Key Features
+- Business value/feature 1
+- Business value/feature 2
+- Business value/feature 3
+
+## Getting Started
+Simple, non-technical steps to get started (e.g., "Contact the development team" or "See setup guide").
+
+## Documentation
+For technical details, setup instructions, and development guidelines, see:
+- `.cursor/rules/` - Development standards and technical documentation
+- `docs/` - Additional documentation
+```
+
+### ❌ DON'T
+- ❌ Don't include technical implementation details
+- ❌ Don't include code examples or code snippets
+- ❌ Don't include configuration details or environment variables
+- ❌ Don't include development commands or technical setup steps
+- ❌ Don't include API endpoint details or technical specifications
+- ❌ Don't duplicate content from rule files or technical docs
+- ❌ Don't update for technical changes - only business/feature changes
+- ❌ Don't make it technical - keep it accessible to non-technical stakeholders
+
+## General Best Practices
+
+### ✅ DO
+- ✅ Follow all project standards and patterns
+- ✅ Use type hints and docstrings
+- ✅ Follow layered architecture
+- ✅ Use dependency injection
+- ✅ Write tests for new code
+- ✅ Provide commit messages after changes
+- ✅ Keep code clean and maintainable
+- ✅ Reference specific rule files for detailed guidance
+
+### ❌ DON'T
+- ❌ Don't skip type hints or docstrings
+- ❌ Don't bypass layers in architecture
+- ❌ Don't use global variables
+- ❌ Don't use blocking I/O in async functions
+- ❌ Don't commit without proper commit messages
+- ❌ Don't duplicate code across apps
+- ❌ Don't put app-specific code in core
+
+## Rule Files Reference
+
+For detailed guidance, see specific rule files:
+- `fastapi-basics.mdc` - Core FastAPI patterns
+- `fastapi-routing.mdc` - Endpoint patterns
+- `openapi-swagger.mdc` - OpenAPI/Swagger documentation best practices
+- `fastapi-schemas.mdc` - Pydantic schemas
+- `fastapi-database.mdc` - Database and repository patterns
+- `fastapi-error-handling.mdc` - Exception handling
+- `fastapi-middleware.mdc` - Middleware patterns
+- `fastapi-testing.mdc` - Testing patterns
+- `fastapi-performance.mdc` - Performance optimization
+- `api-endpoint-complexity.mdc` - O(complexity) documentation and performance targets for endpoints
+- `fastapi-logging.mdc` - Logging standards
+- `type-hints.mdc` - Type hints standards
+- `docstrings.mdc` - Docstring standards
+- `architecture.mdc` - Architecture patterns
+
+## Quick Reference
+
+### Import Patterns
+```python
+# Router
+from .. import schemas, services
+from apps.core.exceptions import NotFoundError
+
+# Service
+from .. import schemas
+from ..repository import bll, dal
+
+# BLL
+from .. import models
+from ..repository import dal
+
+# DAL
+from .. import models
+```
+
+### Common Patterns
+```python
+# Logger
+from config.logging import get_logger
+logger = get_logger(__name__)
+
+# Settings
+from config.settings import settings
+
+# Database
+from apps.core.db import get_db
+from sqlalchemy.ext.asyncio import AsyncSession
+
+# Response
+from fastapi.responses import ORJSONResponse
+```

@@ -1,0 +1,107 @@
+---
+alwaysApply: true
+---
+
+# Observability - Logging, Metrics, and Tracing
+
+## Scope and Relationship to Existing Rules
+- This file complements:
+  - `fastapi-logging.mdc` (how to log)
+  - `fastapi-performance.mdc` (performance measurement)
+  - `fastapi-middleware.mdc` (request context and timing middleware)
+- This file focuses on **what** to emit and **how to keep it consistent**.
+
+## Goals
+- Make production issues diagnosable with minimal guesswork.
+- Enable reliable SLO/alerting using stable metrics and logs.
+- Ensure every request is traceable end-to-end.
+
+## Logging (What to Log)
+
+### Required Context Fields
+Ensure logs can be correlated:
+- `request_id` (already added by logging middleware)
+- `method`, `path`, `status_code`
+- domain identifiers when available (e.g., `user_id`, `order_id`, `tenant_id`)
+
+### High-Value Events (Log at INFO)
+- service startup/shutdown completion
+- external dependency failures (db/redis/keycloak/http upstream)
+- business milestones (created/updated/deleted domain entities)
+- background job start/finish (if applicable)
+
+### Warnings (Log at WARNING)
+- fallback behavior (cache miss fallback, degraded mode)
+- rate limiting triggered
+- slow operations crossing thresholds
+- schema/contract drift signals (unexpected fields, deprecations)
+
+### Errors (Log at ERROR/EXCEPTION)
+- unhandled exceptions
+- persistent dependency failures
+- data corruption signals (invariants broken)
+
+### ❌ Don’t Log
+- secrets/tokens/authorization headers/cookies
+- large payloads (whole request/response bodies)
+- PII beyond what’s necessary (prefer stable IDs)
+
+## Metrics
+
+### Principles
+- Metrics must be **low-cardinality** and **stable**.
+- Avoid labels that explode cardinality: user IDs, emails, IPs, request IDs.
+
+### Naming Conventions
+- Use snake_case metric names.
+- Prefer units in names: `_seconds`, `_bytes`, `_total`.
+- Examples:
+  - `http_requests_total`
+  - `http_request_duration_seconds`
+  - `db_query_duration_seconds`
+  - `cache_hits_total`, `cache_misses_total`
+
+### Label Conventions (Keep Cardinality Small)
+Recommended labels:
+- `service`
+- `method`
+- `route` (templated route, not raw path)
+- `status_code` (or status class like `2xx`)
+
+Avoid labels:
+- `path` with raw IDs
+- `user_id`, `email`, `client_ip`
+
+### What to Measure
+- **Request rate** and **latency** (p50/p95/p99 via histograms)
+- **Error rate** (5xx and domain errors)
+- **DB health** (pool exhaustion, slow queries, failures)
+- **Cache health** (hit/miss, errors) if caching is enabled
+- **Background work** (queue depth, duration, failures) if present
+
+## Tracing (If/When Added)
+- Propagate `X-Request-ID` (or traceparent) to downstream calls.
+- Attach request_id to outbound HTTP headers.
+- Keep trace identifiers out of high-cardinality metric labels.
+
+## Health Endpoints
+- `/health` should be cheap and reliable (no deep dependency checks unless explicitly desired).
+- `/ready` can include dependency checks; it must time out quickly and return 503 when degraded.
+- `/live` should always return 200 unless the process is unhealthy.
+
+## Operational Thresholds (Defaults)
+Use consistent thresholds across services:
+- Slow request warning: > 1s (tunable per endpoint)
+- DB health check timeout: 2s (see `apps.core.db`)
+- External HTTP client timeout: define explicit timeout (never infinite)
+
+## Debug vs Production
+- In `DEBUG`, allow more verbose logs, but still avoid secrets/PII.
+- In production, keep hot-path logs minimal; rely on metrics for volume signals.
+
+## Quick Checklist (Before Merging)
+- Logs include domain identifiers (not PII) and are structured.
+- No secrets/PII are logged.
+- Metrics do not include high-cardinality labels.
+- Health/readiness reflect real dependency state with safe timeouts.
+- Outbound calls propagate correlation IDs.

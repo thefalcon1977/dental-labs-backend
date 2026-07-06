@@ -1,0 +1,647 @@
+---
+alwaysApply: true
+---
+
+# FastAPI Logging - Best Practices and Standards
+
+## Logging Setup
+
+### Logger Initialization
+- Always use `get_logger()` from `config.logging`
+- Pass module name (`__name__`) for proper logger identification
+- Example:
+  ```python
+  from config.logging import get_logger
+
+  logger = get_logger(__name__)
+  ```
+
+### Structured Logging
+- Use structured logging with keyword arguments
+- All logs are automatically JSON in production (Elasticsearch compatible)
+- Context is automatically added (request_id, method, path, etc.)
+- Example:
+  ```python
+  logger.info("User created", user_id=user_id, email=email, role=role)
+  logger.error("Payment failed", order_id=order_id, amount=amount, reason=reason)
+  ```
+
+## Log Levels and When to Use Them
+
+### DEBUG - Development and Detailed Troubleshooting
+- **Use for**: Detailed diagnostic information for development
+- **When**: During development, debugging specific issues
+- **Production**: Usually disabled (set LOG_LEVEL=INFO or higher)
+- **Performance**: Can be verbose, use sparingly in production
+- Example:
+  ```python
+  logger.debug("Processing user data", user_id=user_id, data_keys=list(data.keys()))
+  logger.debug("Database query executed", query=query_str, params=params)
+  ```
+
+### INFO - General Application Flow
+- **Use for**: Normal application flow, important business events
+- **When**: Successful operations, state changes, key milestones
+- **Production**: Enabled by default
+- **Performance**: Minimal impact, use for important events
+- Example:
+  ```python
+  logger.info("User logged in", user_id=user_id, ip_address=ip_address)
+  logger.info("Order created", order_id=order_id, user_id=user_id, total=total)
+  logger.info("Payment processed", payment_id=payment_id, amount=amount, status="success")
+  ```
+
+### WARNING - Potential Issues
+- **Use for**: Unexpected situations that don't break functionality
+- **When**: Deprecated features, fallback behavior, rate limiting
+- **Production**: Enabled, helps identify issues before they become errors
+- **Performance**: Minimal impact
+- Example:
+  ```python
+  logger.warning("Rate limit approaching", user_id=user_id, requests_remaining=5)
+  logger.warning("Using fallback cache", cache_type="local", reason="redis_unavailable")
+  logger.warning("Deprecated endpoint used", endpoint=endpoint, client_version=version)
+  ```
+
+### ERROR - Error Conditions
+- **Use for**: Errors that are handled but need attention
+- **When**: Exceptions caught and handled, failed operations
+- **Production**: Always enabled, critical for monitoring
+- **Performance**: Minimal impact
+- Example:
+  ```python
+  logger.error("Failed to send email", user_id=user_id, email=email, error=str(e))
+  logger.error("Database connection failed", retry_count=retry_count, error=str(e))
+  logger.error("Payment gateway timeout", order_id=order_id, timeout_seconds=30)
+  ```
+
+### CRITICAL - System-Level Failures
+- **Use for**: Critical failures that require immediate attention
+- **When**: System cannot continue, data corruption, security breaches
+- **Production**: Always enabled, triggers alerts
+- **Performance**: Minimal impact (rarely used)
+- Example:
+  ```python
+  logger.critical("Database connection pool exhausted", pool_size=pool_size, active_connections=active)
+  logger.critical("Security breach detected", user_id=user_id, suspicious_activity=activity)
+  logger.critical("Data integrity check failed", table=table_name, affected_rows=rows)
+  ```
+
+## Performance Considerations
+
+### Logging in Endpoints - Performance Rules
+
+#### ✅ DO: Log at Critical Points Only
+- Log at entry and exit of endpoints (if needed)
+- Log errors and exceptions
+- Log important business events
+- Use appropriate log levels
+- Example:
+  ```python
+  @router.post("/users")
+  async def create_user(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
+      """Create user endpoint."""
+      # ✅ Log entry (INFO level, minimal)
+      logger.info("Creating user", email=user_data.email)
+
+      try:
+          user = await services.create_user(db, user_data)
+          # ✅ Log success (INFO level)
+          logger.info("User created", user_id=user.id, email=user.email)
+          return schemas.UserResponse.model_validate(user)
+      except Exception as e:
+          # ✅ Log error (ERROR level)
+          logger.error("Failed to create user", email=user_data.email, error=str(e))
+          raise
+  ```
+
+#### ❌ DON'T: Excessive Logging in Hot Paths
+- Don't log every step in a loop
+- Don't log in tight loops or high-frequency operations
+- Don't use DEBUG in production endpoints
+- Don't log large data structures
+- Example:
+  ```python
+  # ❌ BAD - Too much logging in endpoint
+  @router.get("/items")
+  async def list_items(db: AsyncSession = Depends(get_db)):
+      logger.debug("Starting list_items")
+      logger.debug("Getting database session")
+      result = await db.execute(select(Item))
+      logger.debug("Query executed", count=len(result.scalars().all()))
+      items = result.scalars().all()
+      logger.debug("Converting to schemas")
+      # ... more debug logs
+
+  # ✅ GOOD - Minimal, focused logging
+  @router.get("/items")
+  async def list_items(db: AsyncSession = Depends(get_db)):
+      items = await services.list_items(db)
+      logger.info("Items listed", count=len(items))
+      return items
+  ```
+
+### Performance Best Practices
+
+#### Use Conditional Logging for Expensive Operations
+- Check log level before expensive operations
+- Use `logger.isEnabledFor()` or check settings
+- Example:
+  ```python
+  # ✅ Check if DEBUG is enabled before expensive operation
+  if logger.isEnabledFor(logging.DEBUG):
+      logger.debug("Complex data structure", data=expensive_serialization(data))
+
+  # Or use settings
+  if settings.DEBUG:
+      logger.debug("Detailed debug info", complex_data=complex_data)
+  ```
+
+#### Avoid Logging Large Objects
+- Don't log entire request/response bodies
+- Log identifiers and summaries instead
+- Example:
+  ```python
+  # ❌ BAD - Logs entire request body
+  logger.info("Request received", body=request.json())
+
+  # ✅ GOOD - Logs summary
+  logger.info("Request received", endpoint=endpoint, method=method, user_id=user_id)
+  ```
+
+#### Use Async-Friendly Logging
+- Structlog is already async-friendly
+- Don't block on logging operations
+- Logging is non-blocking by default
+
+## Logging for Operations Team
+
+### Critical Points for Operations Monitoring
+
+#### Request/Response Logging
+- Log all incoming requests (handled by middleware)
+- Log response status codes
+- Log request duration for slow requests
+- Include request_id for tracing
+- Example (already in middleware):
+  ```python
+  # In LoggingMiddleware - automatically logs:
+  logger.info("Request started", method=method, path=path, query_params=query_params)
+  logger.info("Request completed", status_code=status_code)
+  ```
+
+#### Error and Exception Logging
+- Always log exceptions with full context
+- Use `logger.exception()` for exceptions (includes traceback)
+- Include relevant identifiers (user_id, order_id, etc.)
+- Example:
+  ```python
+  try:
+      result = await process_payment(order_id)
+  except PaymentError as e:
+      logger.exception(
+          "Payment processing failed",
+          order_id=order_id,
+          user_id=user_id,
+          amount=amount,
+          payment_method=payment_method,
+      )
+      raise
+  ```
+
+#### System Health and Performance
+- Log slow operations (>1 second)
+- Log resource usage (database connections, memory)
+- Log external service failures
+- Example:
+  ```python
+  import time
+
+  start_time = time.time()
+  result = await expensive_operation()
+  duration = time.time() - start_time
+
+  if duration > 1.0:
+      logger.warning(
+          "Slow operation detected",
+          operation="expensive_operation",
+          duration_seconds=duration,
+          threshold=1.0,
+      )
+  ```
+
+#### Business Metrics
+- Log important business events
+- Include relevant metrics (counts, amounts, durations)
+- Example:
+  ```python
+  logger.info(
+      "Order completed",
+      order_id=order_id,
+      user_id=user_id,
+      total_amount=total,
+      item_count=len(items),
+      processing_time_seconds=duration,
+  )
+  ```
+
+### Operations Team Requirements
+
+#### Must Include in Critical Logs
+- ✅ **Request ID** (automatically added by middleware)
+- ✅ **User/Entity identifiers** (user_id, order_id, etc.)
+- ✅ **Timestamps** (automatically added)
+- ✅ **Error details** (error message, error type, stack trace)
+- ✅ **Context** (endpoint, method, parameters)
+- ✅ **Status codes** (HTTP status, operation status)
+
+#### Log Format for Operations
+- Structured JSON in production (automatic)
+- Searchable fields (user_id, order_id, status_code)
+- Correlatable (request_id for tracing)
+- Example production log:
+  ```json
+  {
+    "event": "Payment processing failed",
+    "level": "error",
+    "timestamp": "2024-01-15T10:30:45.123Z",
+    "request_id": "550e8400-e29b-41d4-a716-446655440000",
+    "user_id": "user_123",
+    "order_id": "order_456",
+    "amount": 99.99,
+    "payment_method": "credit_card",
+    "error": "Insufficient funds",
+    "error_type": "PaymentError",
+    "traceback": "..."
+  }
+  ```
+
+## Logging for Development Team
+
+### Debugging Information
+
+#### Development-Only Logging
+- Use DEBUG level for detailed information
+- Include variable values, intermediate states
+- Log decision points and branching logic
+- Example:
+  ```python
+  logger.debug(
+      "Processing user registration",
+      email=email,
+      validation_passed=is_valid,
+      existing_user=existing_user is not None,
+      will_create=will_create,
+  )
+  ```
+
+#### Code Flow Logging
+- Log entry/exit of complex functions
+- Log important decision points
+- Log state changes
+- Example:
+  ```python
+  logger.debug("Entering payment processing", order_id=order_id)
+
+  if payment_method == "credit_card":
+      logger.debug("Processing credit card payment")
+      result = await process_credit_card(order_id)
+  else:
+      logger.debug("Processing alternative payment", method=payment_method)
+      result = await process_alternative(order_id)
+
+  logger.debug("Payment processing completed", result=result.status)
+  ```
+
+### Development Best Practices
+- Use DEBUG for development, INFO for production
+- Include enough context to reproduce issues
+- Log before and after state changes
+- Use structured logging for easy filtering
+
+## Logging Standards
+
+### Structured Logging Format
+
+#### Always Include Context
+- Use keyword arguments, not string formatting
+- Include relevant identifiers
+- Example:
+  ```python
+  # ❌ BAD - String formatting
+  logger.info(f"User {user_id} created order {order_id}")
+
+  # ✅ GOOD - Structured logging
+  logger.info("User created order", user_id=user_id, order_id=order_id)
+  ```
+
+#### Consistent Field Names
+- Use consistent field names across the application
+- Common fields: `user_id`, `order_id`, `request_id`, `error`, `duration`
+- Use snake_case for field names
+- Example:
+  ```python
+  # Consistent field names
+  logger.info("Order created", order_id=order_id, user_id=user_id)
+  logger.info("Order updated", order_id=order_id, user_id=user_id, status=new_status)
+  logger.info("Order deleted", order_id=order_id, user_id=user_id)
+  ```
+
+### Log Message Guidelines
+
+#### Clear, Actionable Messages
+- Use clear, descriptive messages
+- Include action and entity
+- Example:
+  ```python
+  # ✅ GOOD - Clear messages
+  logger.info("User account activated", user_id=user_id)
+  logger.error("Failed to send notification email", user_id=user_id, email=email)
+  logger.warning("Rate limit exceeded", user_id=user_id, endpoint=endpoint)
+
+  # ❌ BAD - Vague messages
+  logger.info("Done")
+  logger.error("Error occurred")
+  logger.warning("Something happened")
+  ```
+
+#### Include Relevant Metrics
+- Include counts, amounts, durations
+- Include status codes, error codes
+- Example:
+  ```python
+  logger.info(
+      "Batch processing completed",
+      batch_id=batch_id,
+      total_items=total,
+      successful=successful,
+      failed=failed,
+      duration_seconds=duration,
+  )
+  ```
+
+## Critical Points for Logging
+
+### Endpoint Entry/Exit
+- Log important endpoints (not health checks)
+- Include key parameters
+- Log success/failure
+- Example:
+  ```python
+  @router.post("/orders")
+  async def create_order(order_data: OrderCreate, db: AsyncSession = Depends(get_db)):
+      logger.info("Creating order", user_id=order_data.user_id, item_count=len(order_data.items))
+
+      try:
+          order = await services.create_order(db, order_data)
+          logger.info("Order created", order_id=order.id, user_id=order.user_id, total=order.total)
+          return schemas.OrderResponse.model_validate(order)
+      except Exception as e:
+          logger.error("Failed to create order", user_id=order_data.user_id, error=str(e))
+          raise
+  ```
+
+### Database Operations
+- Log slow queries (>500ms)
+- Log failed transactions
+- Log connection issues
+- Example:
+  ```python
+  import time
+
+  start = time.time()
+  try:
+      result = await db.execute(complex_query)
+      duration = time.time() - start
+      if duration > 0.5:
+          logger.warning("Slow database query", query=query_name, duration=duration)
+  except Exception as e:
+      logger.error("Database query failed", query=query_name, error=str(e))
+      raise
+  ```
+
+### External Service Calls
+- Log all external API calls
+- Log failures and timeouts
+- Log response times
+- Example:
+  ```python
+  import time
+
+  start = time.time()
+  try:
+      response = await external_api.call(endpoint, data)
+      duration = time.time() - start
+      logger.info(
+          "External API call succeeded",
+          service=service_name,
+          endpoint=endpoint,
+          duration_seconds=duration,
+          status_code=response.status_code,
+      )
+  except TimeoutError:
+      logger.error("External API timeout", service=service_name, endpoint=endpoint, timeout=30)
+      raise
+  except Exception as e:
+      logger.error("External API call failed", service=service_name, endpoint=endpoint, error=str(e))
+      raise
+  ```
+
+### Business Logic Decisions
+- Log important business decisions
+- Log state transitions
+- Log validation failures
+- Example:
+  ```python
+  if user.balance < order.total:
+      logger.warning(
+          "Insufficient balance",
+          user_id=user_id,
+          balance=user.balance,
+          required=order.total,
+      )
+      raise InsufficientBalanceError()
+
+  logger.info("Balance check passed", user_id=user_id, balance=user.balance)
+  ```
+
+### Security Events
+- Log authentication attempts
+- Log authorization failures
+- Log suspicious activities
+- Example:
+  ```python
+  logger.warning(
+      "Failed login attempt",
+      email=email,
+      ip_address=ip_address,
+      reason="invalid_password",
+  )
+
+  logger.info("User authenticated", user_id=user_id, method="jwt", ip_address=ip_address)
+  ```
+
+## Logging Anti-Patterns
+
+### ❌ Don't Do This
+
+#### Excessive Logging
+```python
+# ❌ BAD - Too verbose
+logger.debug("Step 1")
+logger.debug("Step 2")
+logger.debug("Step 3")
+# ... 50 more debug logs
+```
+
+#### Logging Sensitive Data
+```python
+# ❌ BAD - Logs sensitive information
+logger.info("User login", password=password, credit_card=card_number)
+
+# ✅ GOOD - Logs non-sensitive identifiers
+logger.info("User login", user_id=user_id, email=email)
+```
+
+#### String Formatting Instead of Structured
+```python
+# ❌ BAD - String formatting
+logger.info(f"User {user_id} created order {order_id} for ${total}")
+
+# ✅ GOOD - Structured logging
+logger.info("User created order", user_id=user_id, order_id=order_id, total=total)
+```
+
+#### Logging in Loops
+```python
+# ❌ BAD - Logs in tight loop
+for item in items:
+    logger.debug(f"Processing item {item.id}")  # Too verbose
+    process(item)
+
+# ✅ GOOD - Log summary
+logger.info("Processing items", count=len(items))
+for item in items:
+    process(item)
+logger.info("Items processed", count=len(items))
+```
+
+## Best Practices Summary
+
+### ✅ DO
+- ✅ Use structured logging with keyword arguments
+- ✅ Log at critical points (entry/exit, errors, important events)
+- ✅ Include relevant context (user_id, order_id, request_id)
+- ✅ Use appropriate log levels (DEBUG for dev, INFO for prod)
+- ✅ Log exceptions with `logger.exception()`
+- ✅ Log slow operations and performance issues
+- ✅ Log business metrics and important events
+- ✅ Use consistent field names
+- ✅ Keep logs searchable and correlatable
+
+### ❌ DON'T
+- ❌ Don't log sensitive data (passwords, credit cards, tokens)
+- ❌ Don't log excessively in hot paths
+- ❌ Don't use DEBUG in production endpoints
+- ❌ Don't log large data structures
+- ❌ Don't use string formatting for structured data
+- ❌ Don't log in tight loops
+- ❌ Don't block on logging operations
+- ❌ Don't log every step of a process
+
+## Performance Checklist
+
+### Before Adding Logs to Endpoints
+- ✅ Is this log necessary for operations/development?
+- ✅ Is the log level appropriate (not DEBUG in production)?
+- ✅ Does it include enough context for troubleshooting?
+- ✅ Will it impact performance (avoid in hot paths)?
+- ✅ Is sensitive data excluded?
+- ✅ Can operations team use this to track issues?
+
+## Example: Production-Ready Endpoint Logging
+
+```python
+"""Example of production-ready endpoint logging."""
+
+from fastapi import APIRouter, Depends, status
+from sqlalchemy.ext.asyncio import AsyncSession
+import time
+
+from apps.core.db import get_db
+from apps.core.exceptions import NotFoundError
+from config.logging import get_logger
+
+from .. import schemas, services
+
+router = APIRouter()
+logger = get_logger(__name__)
+
+
+@router.post(
+    "/orders",
+    response_model=schemas.OrderResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_order(
+    order_data: schemas.OrderCreate,
+    db: AsyncSession = Depends(get_db),
+) -> schemas.OrderResponse:
+    """Create order endpoint with proper logging."""
+    # Log entry with key parameters
+    logger.info(
+        "Creating order",
+        user_id=order_data.user_id,
+        item_count=len(order_data.items),
+    )
+
+    start_time = time.time()
+
+    try:
+        # Business logic (no logging in tight loops)
+        order = await services.create_order(db, order_data)
+
+        duration = time.time() - start_time
+
+        # Log success with metrics
+        logger.info(
+            "Order created successfully",
+            order_id=order.id,
+            user_id=order.user_id,
+            total=order.total,
+            item_count=len(order.items),
+            duration_seconds=duration,
+        )
+
+        # Log slow operations
+        if duration > 1.0:
+            logger.warning(
+                "Slow order creation",
+                order_id=order.id,
+                duration_seconds=duration,
+                threshold=1.0,
+            )
+
+        return schemas.OrderResponse.model_validate(order)
+
+    except NotFoundError as e:
+        # Log business errors
+        logger.warning(
+            "Order creation failed - resource not found",
+            user_id=order_data.user_id,
+            error=str(e),
+            details=e.details,
+        )
+        raise
+
+    except Exception as e:
+        # Log unexpected errors with full context
+        logger.exception(
+            "Order creation failed - unexpected error",
+            user_id=order_data.user_id,
+            item_count=len(order_data.items),
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+        raise
+```

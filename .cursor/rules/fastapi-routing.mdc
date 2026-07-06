@@ -1,0 +1,266 @@
+---
+alwaysApply: true
+---
+
+# FastAPI Routing - Endpoint Patterns
+
+## Router Definition
+
+### Router Creation
+- Create router: `router = APIRouter()`
+- Place routers in `apps/{app_name}/routers/router.py`
+- Use descriptive router tags
+- Example:
+  ```python
+  from fastapi import APIRouter
+
+  router = APIRouter()
+  ```
+
+### Router Registration
+- Routers are automatically discovered from `apps/` directory
+- Mount with prefix: `/app_name`
+- Include tags for OpenAPI documentation
+- Example:
+  ```python
+  app.include_router(
+      router,
+      prefix="/users",
+      tags=["users"],
+  )
+  ```
+
+## Endpoint Decorators
+
+### Complete Endpoint Definition
+- Always include: `summary`, `description`, `status_code`, `response_model`
+- Use proper HTTP status codes
+- Example:
+  ```python
+  @router.get(
+      "/items/{item_id}",
+      response_model=ItemResponse,
+      status_code=status.HTTP_200_OK,
+      summary="Get item by ID",
+      description="Retrieve a specific item by its unique identifier",
+  )
+  async def get_item(item_id: str) -> ItemResponse:
+      """Get item endpoint."""
+      pass
+  ```
+
+### HTTP Methods
+- Use appropriate HTTP methods:
+  - `GET` for retrieval
+  - `POST` for creation
+  - `PUT` for full updates
+  - `PATCH` for partial updates
+  - `DELETE` for deletion
+- Example:
+  ```python
+  @router.post(
+      "/items",
+      response_model=ItemResponse,
+      status_code=status.HTTP_201_CREATED,
+      summary="Create item",
+  )
+  async def create_item(item: ItemCreate) -> ItemResponse:
+      pass
+  ```
+
+## Path Parameters
+
+### Path Parameter Types
+- Use type hints for path parameters
+- FastAPI automatically validates types
+- Example:
+  ```python
+  @router.get("/items/{item_id}")
+  async def get_item(item_id: str) -> ItemResponse:
+      pass
+
+  @router.get("/items/{item_id:int}")
+  async def get_item(item_id: int) -> ItemResponse:
+      pass
+  ```
+
+## Query Parameters
+
+### Query Parameter Definition
+- Use `Query()` for query parameters with validation
+- Provide default values and descriptions
+- Example:
+  ```python
+  from fastapi import Query
+
+  @router.get("/items")
+  async def list_items(
+      page: int = Query(1, ge=1, description="Page number"),
+      page_size: int = Query(20, ge=1, le=100, description="Items per page"),
+      search: str | None = Query(None, description="Search term"),
+  ):
+      pass
+  ```
+
+## Request Body
+
+### Request Body Models
+- Use Pydantic models for request bodies
+- Place schemas in `apps/{app_name}/schemas/`
+- Example:
+  ```python
+  from pydantic import BaseModel
+
+  class ItemCreate(BaseModel):
+      name: str
+      description: str | None = None
+
+  @router.post("/items")
+  async def create_item(item: ItemCreate) -> ItemResponse:
+      pass
+  ```
+
+### Multiple Request Bodies
+- Use multiple Pydantic models if needed
+- Example:
+  ```python
+  @router.post("/items")
+  async def create_item(
+      item: ItemCreate,
+      metadata: ItemMetadata,
+  ) -> ItemResponse:
+      pass
+  ```
+
+## Response Status Codes
+
+### Standard Status Codes
+- `200 OK` - Successful GET, PUT, PATCH
+- `201 Created` - Successful POST
+- `204 No Content` - Successful DELETE
+- `400 Bad Request` - Invalid request
+- `401 Unauthorized` - Authentication required
+- `403 Forbidden` - Insufficient permissions
+- `404 Not Found` - Resource not found
+- `409 Conflict` - Resource conflict
+- `422 Unprocessable Entity` - Validation error
+- `500 Internal Server Error` - Server error
+- `503 Service Unavailable` - Service unavailable
+
+### Status Code Usage
+- Always specify `status_code` in decorator
+- Import: `from fastapi import status`
+- Example:
+  ```python
+  from fastapi import status
+
+  @router.post(
+      "/items",
+      status_code=status.HTTP_201_CREATED,
+  )
+  async def create_item(item: ItemCreate) -> ItemResponse:
+      pass
+  ```
+
+## Route Handler Functions
+
+### Function Signatures
+- Always use type hints
+- Include docstrings
+- Use async/await
+- Example:
+  ```python
+  @router.get("/items/{item_id}")
+  async def get_item(
+      item_id: str,
+      db: AsyncSession = Depends(get_db),
+  ) -> ItemResponse:
+      """Get item by ID.
+
+      Args:
+          item_id: Item identifier
+          db: Database session
+
+      Returns:
+          Item response
+      """
+      pass
+  ```
+
+### Error Handling in Routes
+- Raise exceptions, don't return error responses
+- Use custom exceptions from `apps.core.exceptions`
+- Exception handlers convert to HTTP responses
+- Example:
+  ```python
+  from apps.core.exceptions import NotFoundError
+
+  @router.get("/items/{item_id}")
+  async def get_item(item_id: str) -> ItemResponse:
+      item = await services.get_item(item_id)
+      if not item:
+          raise NotFoundError(resource="Item", identifier=item_id)
+      return ItemResponse.model_validate(item)
+  ```
+
+## Route Organization
+
+### Grouping Related Routes
+- Group related endpoints in same router
+- Use consistent URL patterns
+- Example:
+  ```python
+  # Good: All user routes together
+  router.get("/users")
+  router.get("/users/{user_id}")
+  router.post("/users")
+  router.put("/users/{user_id}")
+  router.delete("/users/{user_id}")
+  ```
+
+### Route Prefixes
+- Use consistent prefixes per app
+- Prefix matches app name: `/users`, `/orders`, etc.
+- Example:
+  ```python
+  # In app_factory.py
+  app.include_router(
+      user_router,
+      prefix="/users",
+      tags=["users"],
+  )
+  ```
+
+## OpenAPI Documentation
+
+- For full OpenAPI/Swagger best practices (responses, error examples, checklist), see **`openapi-swagger.mdc`**.
+
+### Endpoint Documentation
+- Always provide `summary` and `description`
+- Use clear, concise descriptions
+- Example:
+  ```python
+  @router.get(
+      "/items",
+      summary="List items",
+      description="Retrieve a paginated list of all items, ordered by creation date",
+  )
+  async def list_items():
+      pass
+  ```
+
+### Response Documentation
+- Document all possible responses
+- Use `responses` parameter for multiple status codes
+- Example:
+  ```python
+  @router.get(
+      "/items/{item_id}",
+      responses={
+          200: {"description": "Item found"},
+          404: {"description": "Item not found"},
+      },
+  )
+  async def get_item(item_id: str):
+      pass
+  ```

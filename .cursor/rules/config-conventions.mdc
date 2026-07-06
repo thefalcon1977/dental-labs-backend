@@ -1,0 +1,53 @@
+---
+alwaysApply: true
+---
+
+# Config Conventions (Dynaconf)
+
+## Goals
+- Keep config consistent, discoverable, and safe across environments.
+- Prevent drift between code, settings, and secrets.
+
+## Structure
+- All config lives under `config/settings/` via Dynaconf.
+- Use env var overrides with the **same nested path** as TOML keys.
+- Prefer structured sections: `database`, `redis`, `security`, `uvicorn`, etc.
+
+## Naming
+- UPPER_SNAKE_CASE for top-level keys.
+- Nested sections: `[section] KEY=value`.
+- Env vars mirror nesting with `__`, e.g. `APP_DATABASE__HOST`.
+- Avoid ad-hoc single-use keys; group by domain/feature.
+
+## Defaults and Required Values
+- Provide sane defaults for local/dev when safe.
+- Mark required/secret values with no defaults; expect env override.
+- Use validators in `config/settings/validators.py` for required keys, ranges, and types.
+
+## Adding New Settings
+1) Add to `settings.toml` with comments and sensible defaults (if safe).
+2) Add validators (type, bounds, required/optional).
+3) Document expected env vars (names, types).
+4) If sensitive, **do not** add defaults; require env/secret injection.
+5) Avoid duplicating existing keys—reuse sections.
+
+## Secrets
+- Never commit secrets or sample secrets with plausible values.
+- Use env vars/secret stores; keep placeholders obvious (e.g., `changeme`).
+
+## Feature Flags
+- Use boolean flags in a dedicated section (e.g., `[features]`).
+- Default to safe/off in prod unless explicitly required.
+
+## Logging/Tracing/Metrics Config
+- Centralize under `[logging]`, `[observability]`, or similar—avoid scattering.
+- Include sampling/level/rate knobs with defaults.
+
+## Validation Examples
+- Ports: `gte=1`, `lte=65535`
+- Timeouts: positive, bounded
+- URLs: validate scheme/host for SSRF safety
+
+## Environment-Specific Files
+- Keep overrides small and purposeful.
+- Do not fork logic by environment inside code; use config flags.

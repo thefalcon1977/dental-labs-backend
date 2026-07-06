@@ -1,0 +1,442 @@
+---
+alwaysApply: true
+---
+
+# Docker - Best Practices and Standards
+
+## Dockerfile Standards
+
+### Multi-Stage Builds
+- **Always use multi-stage builds** for production images
+- Separate builder stage from runtime stage
+- Minimize final image size
+- Example:
+  ```dockerfile
+  # Stage 1: Builder
+  FROM python:3.12-slim as builder
+  # Install build dependencies and compile packages
+
+  # Stage 2: Runtime
+  FROM python:3.12-slim as runtime
+  # Copy only compiled packages, minimal runtime dependencies
+  ```
+
+### Base Image Selection
+- Use **official Python images** with specific versions
+- Prefer `python:3.12-slim` for smaller images
+- Pin Python version to match project requirements
+- Example:
+  ```dockerfile
+  FROM python:3.12-slim as builder
+  # Not: FROM python:latest or FROM python:3
+  ```
+
+### Security Best Practices
+
+#### Non-Root User
+- **Always run as non-root user** in production
+- Create dedicated user with specific UID
+- Set proper ownership on application files
+- Example:
+  ```dockerfile
+  RUN groupadd -r appuser && useradd -r -g appuser -u 1000 appuser \
+      && mkdir -p /app /home/appuser \
+      && chown -R appuser:appuser /app /home/appuser
+
+  USER appuser
+  ```
+
+#### Environment Variables
+- Set Python optimization flags
+- Use environment variables for configuration
+- Example:
+  ```dockerfile
+  ENV PYTHONUNBUFFERED=1 \
+      PYTHONDONTWRITEBYTECODE=1 \
+      PATH="/home/appuser/.local/bin:$PATH" \
+      PYTHONPATH="/app"
+  ```
+
+#### Layer Optimization
+- Combine RUN commands to reduce layers
+- Clean up package manager cache
+- Remove build dependencies in runtime stage
+- Example:
+  ```dockerfile
+  RUN apt-get update && apt-get install -y --no-install-recommends \
+      libpq5 \
+      postgresql-client \
+      && rm -rf /var/lib/apt/lists/*
+  ```
+
+### Health Checks
+- **Always include health checks** for production images
+- Use application health endpoint
+- Configure appropriate intervals and timeouts
+- Example:
+  ```dockerfile
+  HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+      CMD curl -f http://localhost:8000/health || exit 1
+  ```
+
+### Working Directory
+- Set explicit working directory
+- Use absolute paths
+- Example:
+  ```dockerfile
+  WORKDIR /app
+  ```
+
+### File Copying
+- Copy requirements first for better layer caching
+- Copy application code last
+- Use `--chown` for proper ownership
+- Example:
+  ```dockerfile
+  # Copy requirements first (cached layer)
+  COPY requirements/prod.txt requirements.txt
+  RUN pip install --no-cache-dir -r requirements.txt
+
+  # Copy application code last
+  COPY --chown=appuser:appuser . .
+  ```
+
+### Entrypoint Scripts
+- Use entrypoint scripts for initialization
+- Handle database wait logic
+- Run migrations if needed
+- Example:
+  ```dockerfile
+  COPY --chown=appuser:appuser docker/entrypoint.sh /entrypoint.sh
+  RUN chmod +x /entrypoint.sh
+  ENTRYPOINT ["/entrypoint.sh"]
+  CMD ["python", "main.py", "run"]
+  ```
+
+## Docker Compose Standards
+
+### Service Naming
+- Use descriptive service names
+- Match service names to application components
+- Example:
+  ```yaml
+  services:
+    postgres:  # Database service
+    app:       # Application service
+    redis:     # Cache service (if needed)
+  ```
+
+### Environment Variables
+- Use environment variable substitution
+- Provide sensible defaults
+- Match Dynaconf variable naming (`APP_` prefix)
+- Example:
+  ```yaml
+  environment:
+    ENV: ${ENV:-production}
+    APP_DATABASE__HOST: ${APP_DATABASE__HOST:-postgres}
+    APP_DATABASE__PORT: ${APP_DATABASE__PORT:-5432}
+  ```
+
+### Service Dependencies
+- Use `depends_on` with health checks
+- Wait for dependencies to be healthy
+- Example:
+  ```yaml
+  depends_on:
+    postgres:
+      condition: service_healthy
+  ```
+
+### Health Checks in Compose
+- Define health checks for all services
+- Use appropriate test commands
+- Configure intervals and timeouts
+- Example:
+  ```yaml
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+    start_period: 40s
+  ```
+
+### Networks
+- Use custom networks for service isolation
+- Use bridge driver for local development
+- Example:
+  ```yaml
+  networks:
+    app-network:
+      driver: bridge
+  ```
+
+### Volumes
+- Use named volumes for persistent data
+- Mount logs directory if needed
+- Use local driver for development
+- Example:
+  ```yaml
+  volumes:
+    postgres_data:
+      driver: local
+    ./logs:/app/logs  # Mount logs for debugging
+  ```
+
+### Port Mapping
+- Map ports using environment variables
+- Use default values for development
+- Example:
+  ```yaml
+  ports:
+    - "${APP_PORT:-8000}:8000"
+  ```
+
+## Entrypoint Scripts
+
+### Entrypoint Script Standards
+- Place in `docker/entrypoint.sh`
+- Make executable: `chmod +x`
+- Handle database wait logic
+- Run migrations conditionally
+- Provide clear error messages
+- Example structure:
+  ```bash
+  #!/bin/bash
+  set -e
+
+  # Wait for database
+  wait_for_db() {
+      # Database wait logic
+  }
+
+  # Run migrations
+  run_migrations() {
+      if [ "${AUTO_MIGRATE:-true}" = "true" ]; then
+          python main.py migrate
+      fi
+  }
+
+  # Main execution
+  main() {
+      wait_for_db
+      run_migrations
+      exec "$@"
+  }
+
+  main "$@"
+  ```
+
+### Database Wait Logic
+- Wait for database to be ready before starting app
+- Use service names in Docker Compose (not `localhost`)
+- Provide clear error messages
+- Example:
+  ```bash
+  # ✅ GOOD - Use service name
+  DB_HOST="${APP_DATABASE__HOST:-postgres}"
+
+  # ❌ BAD - localhost doesn't work in Docker
+  DB_HOST="localhost"
+  ```
+
+### Migration Handling
+- Run migrations automatically in entrypoint
+- Make migrations optional via `AUTO_MIGRATE` env var
+- Check if database is enabled before running
+- Example:
+  ```bash
+  if [ "${APP_DATABASE__ENABLED}" = "true" ] && [ "${AUTO_MIGRATE:-true}" = "true" ]; then
+      python main.py migrate
+  fi
+  ```
+
+## .dockerignore
+
+### Always Include .dockerignore
+- Reduce build context size
+- Exclude unnecessary files
+- Improve build performance
+- Example:
+  ```
+  # Git
+  .git
+  .gitignore
+
+  # Python
+  __pycache__
+  *.pyc
+  *.pyo
+  *.pyd
+  .pytest_cache
+  .mypy_cache
+
+  # Virtual environments
+  venv/
+  env/
+  .venv
+
+  # IDE
+  .vscode/
+  .idea/
+  *.swp
+  *.swo
+
+  # Documentation
+  README.md
+  docs/
+
+  # Tests
+  tests/
+  *.test.py
+
+  # Development files
+  .env
+  .env.local
+  docker-compose*.yml
+  ```
+
+## Docker Best Practices
+
+### Image Size Optimization
+- ✅ Use multi-stage builds
+- ✅ Remove build dependencies in runtime stage
+- ✅ Clean package manager cache
+- ✅ Use `.dockerignore` to exclude files
+- ✅ Minimize layers
+- ❌ Don't install unnecessary packages
+- ❌ Don't copy unnecessary files
+
+### Security
+- ✅ Run as non-root user
+- ✅ Use specific image tags (not `latest`)
+- ✅ Scan images for vulnerabilities
+- ✅ Don't expose secrets in Dockerfile
+- ✅ Use secrets management for sensitive data
+- ❌ Don't hardcode passwords
+- ❌ Don't run as root
+
+### Performance
+- ✅ Leverage layer caching (copy requirements first)
+- ✅ Use health checks for proper orchestration
+- ✅ Configure appropriate resource limits
+- ✅ Use build cache effectively
+- ❌ Don't invalidate cache unnecessarily
+
+### Networking
+- ✅ Use service names for inter-container communication
+- ✅ Use custom networks for isolation
+- ✅ Expose only necessary ports
+- ❌ Don't use `localhost` for service communication
+- ❌ Don't expose internal ports unnecessarily
+
+## Environment-Specific Configuration
+
+### Development
+- Use `docker-compose.yml` for local development
+- Enable debug mode
+- Mount source code for hot reload
+- Example:
+  ```yaml
+  volumes:
+    - .:/app  # Mount source for development
+  environment:
+    APP_DEBUG: "true"
+  ```
+
+### Production
+- Use production-optimized images
+- Disable debug mode
+- Use secrets management
+- Set resource limits
+- Example:
+  ```yaml
+  environment:
+    APP_DEBUG: "false"
+    APP_LOG_LEVEL: "INFO"
+  deploy:
+    resources:
+      limits:
+        cpus: '2'
+        memory: 2G
+  ```
+
+## Common Patterns
+
+### Database Service
+```yaml
+postgres:
+  image: postgres:16-alpine
+  environment:
+    POSTGRES_USER: ${APP_DATABASE__USER:-postgres}
+    POSTGRES_PASSWORD: ${APP_DATABASE__PASSWORD:-postgres}
+    POSTGRES_DB: ${APP_DATABASE__NAME:-app_db}
+  volumes:
+    - postgres_data:/var/lib/postgresql/data
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U ${APP_DATABASE__USER:-postgres}"]
+    interval: 10s
+    timeout: 5s
+    retries: 5
+```
+
+### Application Service
+```yaml
+app:
+  build:
+    context: .
+    dockerfile: Dockerfile
+  environment:
+    ENV: ${ENV:-production}
+    APP_DATABASE__HOST: postgres  # Use service name
+  depends_on:
+    postgres:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+    interval: 30s
+```
+
+## Troubleshooting
+
+### Common Issues
+
+#### Database Connection Issues
+- **Problem**: Cannot connect to database in Docker
+- **Solution**: Use service name (e.g., `postgres`) not `localhost`
+- **Check**: Verify `APP_DATABASE__HOST` is set to service name
+
+#### Build Cache Issues
+- **Problem**: Changes not reflected in container
+- **Solution**: Rebuild without cache: `docker-compose build --no-cache`
+- **Check**: Verify `.dockerignore` isn't excluding needed files
+
+#### Permission Issues
+- **Problem**: Permission denied errors
+- **Solution**: Ensure entrypoint script is executable
+- **Check**: Verify file ownership with `--chown` in Dockerfile
+
+## Best Practices Summary
+
+### ✅ DO
+- ✅ Use multi-stage builds
+- ✅ Run as non-root user
+- ✅ Include health checks
+- ✅ Use service names for networking
+- ✅ Optimize layer caching
+- ✅ Clean up package manager cache
+- ✅ Use `.dockerignore`
+- ✅ Pin image versions
+- ✅ Use entrypoint scripts for initialization
+- ✅ Configure proper dependencies
+
+### ❌ DON'T
+- ❌ Don't use `latest` tags
+- ❌ Don't run as root
+- ❌ Don't use `localhost` for service communication
+- ❌ Don't copy unnecessary files
+- ❌ Don't hardcode secrets
+- ❌ Don't skip health checks
+- ❌ Don't forget to clean package cache
+- ❌ Don't expose unnecessary ports

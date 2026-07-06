@@ -1,0 +1,434 @@
+---
+alwaysApply: true
+---
+
+# Architecture - Project Structure and Patterns
+
+## Project Structure Overview
+
+### Layered Architecture Pattern
+Each app follows a layered architecture pattern with clear separation of concerns:
+
+```
+apps/{app_name}/
+├── models/              # SQLAlchemy database models
+├── schemas/             # Pydantic request/response schemas
+├── services/            # Business logic layer (orchestrates BLL)
+├── repository/          # Data access layer
+│   ├── dal.py          # Data Access Layer (raw database operations)
+│   └── bll.py          # Business Logic Layer (domain logic)
+├── routers/             # FastAPI route handlers
+├── tests/               # Unit and integration tests
+├── helpers/             # App-specific helper modules
+│   ├── enums.py        # Enumeration definitions
+│   └── exceptions.py   # App-specific exceptions
+└── utils/               # Utility functions
+```
+
+## Directory Structure and Responsibilities
+
+### Apps Directory
+- **Location**: `apps/{app_name}/`
+- **Purpose**: Each feature/module goes in its own app directory
+- **Naming**: Use lowercase, descriptive names (e.g., `users`, `orders`, `payments`)
+- **Isolation**: Each app is self-contained with its own models, schemas, services, etc.
+
+### Models Directory
+- **Location**: `apps/{app_name}/models/`
+- **Purpose**: SQLAlchemy database models
+- **Structure**:
+  ```
+  apps/{app_name}/models/
+  ├── __init__.py
+  ├── user.py           # User model
+  ├── profile.py         # Profile model
+  └── mixins.py         # App-specific mixins (optional)
+  ```
+- **Rules**:
+  - All models inherit from `apps.core.db.Base`
+  - Use SQLAlchemy 2.0 syntax with `Mapped` and `mapped_column`
+  - Place related models in same file when appropriate
+
+### Schemas Directory
+- **Location**: `apps/{app_name}/schemas/`
+- **Purpose**: Pydantic request/response schemas
+- **Structure**:
+  ```
+  apps/{app_name}/schemas/
+  ├── __init__.py
+  ├── user.py           # User schemas (Create, Update, Response)
+  └── profile.py        # Profile schemas
+  ```
+- **Rules**:
+  - Use descriptive names: `UserCreate`, `UserUpdate`, `UserResponse`
+  - Group related schemas in same file
+  - Export from `__init__.py`
+
+### Services Directory
+- **Location**: `apps/{app_name}/services/`
+- **Purpose**: Business logic orchestration layer
+- **Structure**:
+  ```
+  apps/{app_name}/services/
+  ├── __init__.py
+  └── user_service.py   # User service functions
+  ```
+- **Responsibilities**:
+  - Orchestrate BLL and DAL operations
+  - Convert models to schemas
+  - Handle business logic coordination
+  - Call repository layers (BLL/DAL)
+- **Rules**:
+  - Services receive database session via dependency injection
+  - Services return schema types, not models
+  - Services coordinate multiple repository calls
+
+### Repository Directory
+- **Location**: `apps/{app_name}/repository/`
+- **Purpose**: Data access layer with two sub-layers
+- **Structure**:
+  ```
+  apps/{app_name}/repository/
+  ├── __init__.py
+  ├── dal.py            # Data Access Layer (read operations)
+  └── bll.py            # Business Logic Layer (write operations)
+  ```
+
+#### DAL (Data Access Layer) - `dal.py`
+- **Purpose**: Handle all read operations (SELECT queries)
+- **Responsibilities**:
+  - Read-only database queries
+  - SQL-level pagination
+  - Query optimization (eager loading, filtering, ordering)
+  - Minimize database connections
+  - Return raw model instances
+- **Should NOT**:
+  - Handle transactions
+  - Create/update/delete operations
+  - Return schemas (return models)
+
+#### BLL (Business Logic Layer) - `bll.py`
+- **Purpose**: Handle write operations and business logic
+- **Responsibilities**:
+  - Create, update, delete operations
+  - Transaction management
+  - Business rule validation
+  - Coordinate multiple DAL calls if needed
+  - Call DAL for read operations when needed
+- **Should NOT**:
+  - Contain raw SQL queries (delegate to DAL)
+  - Return schemas (return models)
+
+### Routers Directory
+- **Location**: `apps/{app_name}/routers/`
+- **Purpose**: FastAPI route handlers
+- **Structure**:
+  ```
+  apps/{app_name}/routers/
+  ├── __init__.py
+  └── router.py         # Route definitions
+  ```
+- **Responsibilities**:
+  - Define API endpoints
+  - Validate request schemas
+  - Call service layer
+  - Handle HTTP status codes
+  - Return response schemas
+- **Rules**:
+  - All route handlers must be async
+  - Use dependency injection for database sessions
+  - Raise exceptions, don't return error responses
+
+### Tests Directory
+- **Location**: `apps/{app_name}/tests/`
+- **Purpose**: Unit and integration tests
+- **Structure**:
+  ```
+  apps/{app_name}/tests/
+  ├── __init__.py
+  ├── test_routers.py
+  ├── test_services.py
+  ├── test_repository.py
+  └── test_models.py
+  ```
+- **Rules**:
+  - Mirror app structure in tests
+  - Use pytest with pytest-asyncio
+  - Test each layer independently
+
+### Helpers Directory
+- **Location**: `apps/{app_name}/helpers/`
+- **Purpose**: App-specific helper modules
+- **Structure**:
+  ```
+  apps/{app_name}/helpers/
+  ├── __init__.py
+  ├── enums.py          # Enumeration definitions
+  └── exceptions.py     # App-specific exceptions
+  ```
+
+#### enums.py
+- Define enumeration types for the app
+- Example:
+  ```python
+  from enum import Enum
+
+  class UserStatus(str, Enum):
+      """User status enumeration."""
+      ACTIVE = "active"
+      INACTIVE = "inactive"
+      SUSPENDED = "suspended"
+  ```
+
+#### exceptions.py
+- Define app-specific exceptions
+- Must inherit from `BaseAPIException`
+- Example:
+  ```python
+  from apps.core.exceptions import BaseAPIException
+  from fastapi import status
+
+  class UserError(BaseAPIException):
+      """Base exception for user-related errors."""
+      pass
+
+  class UserNotFoundError(UserError):
+      """User not found exception."""
+      def __init__(self, user_id: str):
+          super().__init__(
+              message=f"User not found: {user_id}",
+              status_code=status.HTTP_404_NOT_FOUND,
+              details={"user_id": user_id},
+          )
+  ```
+
+### Utils Directory
+- **Location**: `apps/{app_name}/utils/`
+- **Purpose**: Utility functions specific to the app
+- **Structure**:
+  ```
+  apps/{app_name}/utils/
+  ├── __init__.py
+  └── user_utils.py     # User-specific utilities
+  ```
+- **Rules**:
+  - Keep utilities pure functions when possible
+  - No business logic (use services for that)
+  - Reusable helper functions
+
+## Core Directory
+
+### Shared Functionality
+- **Location**: `apps/core/`
+- **Purpose**: Shared functionality across all apps
+- **Structure**:
+  ```
+  apps/core/
+  ├── __init__.py
+  ├── app_factory.py    # FastAPI app factory
+  ├── db.py             # Database configuration
+  ├── exceptions.py     # Base exceptions
+  ├── middleware/       # Shared middleware
+  ├── models.py         # Core model mixins
+  ├── utils/            # Core utilities
+  └── version.py        # Version management
+  ```
+- **Rules**:
+  - Core code is shared across all apps
+  - Don't put app-specific code in core
+  - Core provides base classes and utilities
+
+## Config Directory
+
+### Configuration Management
+- **Location**: `config/`
+- **Purpose**: Application configuration
+- **Structure**:
+  ```
+  config/
+  ├── settings/         # Dynaconf settings
+  ├── logging/          # Logging configuration
+  └── metrics/          # Prometheus metrics
+  ```
+
+## Data Flow Architecture
+
+### Request Flow
+```
+HTTP Request
+    ↓
+Router (routers/router.py)
+    ↓ Validates request schema
+    ↓
+Service (services/user_service.py)
+    ↓ Orchestrates business logic
+    ↓ Converts models to schemas
+    ↓
+BLL (repository/bll.py)
+    ↓ Business logic validation
+    ↓ Transaction management
+    ↓
+DAL (repository/dal.py)
+    ↓ Database queries
+    ↓
+Database
+```
+
+### Response Flow
+```
+Database
+    ↓ Model instances
+    ↓
+DAL (repository/dal.py)
+    ↓ Returns models
+    ↓
+BLL (repository/bll.py)
+    ↓ Returns models
+    ↓
+Service (services/user_service.py)
+    ↓ Converts models to schemas
+    ↓ Returns schemas
+    ↓
+Router (routers/router.py)
+    ↓ Returns HTTP response
+    ↓
+HTTP Response
+```
+
+## Layer Responsibilities
+
+### Router Layer
+- **Input**: HTTP requests, request schemas
+- **Output**: HTTP responses, response schemas
+- **Responsibilities**:
+  - HTTP request/response handling
+  - Request validation (Pydantic)
+  - Call service layer
+  - Handle HTTP status codes
+  - Raise exceptions (not return errors)
+- **Should NOT**:
+  - Contain business logic
+  - Access database directly
+  - Return error responses directly
+
+### Service Layer
+- **Input**: Request schemas, database session
+- **Output**: Response schemas
+- **Responsibilities**:
+  - Orchestrate BLL and DAL operations
+  - Convert models to schemas
+  - Coordinate multiple repository calls
+  - Handle business logic coordination
+- **Should NOT**:
+  - Direct database access
+  - Raw SQL queries
+  - HTTP-specific logic
+
+### BLL Layer
+- **Input**: Request schemas, database session
+- **Output**: Model instances
+- **Responsibilities**:
+  - Business logic validation
+  - Transaction management
+  - Create/update/delete operations
+  - Call DAL for reads when needed
+- **Should NOT**:
+  - Return schemas (return models)
+  - Handle HTTP concerns
+  - Direct database queries (use DAL)
+
+### DAL Layer
+- **Input**: Database session, query parameters
+- **Output**: Model instances
+- **Responsibilities**:
+  - Read-only database queries
+  - SQL-level pagination
+  - Query optimization
+  - Minimize database connections
+- **Should NOT**:
+  - Handle transactions
+  - Create/update/delete operations
+  - Business logic
+  - Return schemas (return models)
+
+## Import Rules
+
+### Layer Import Rules
+- **Routers** import from: `schemas`, `services`, `core.exceptions`
+- **Services** import from: `schemas`, `repository.bll`, `repository.dal`
+- **BLL** import from: `models`, `repository.dal`, `schemas` (for validation)
+- **DAL** import from: `models` only
+- **Never** import from higher layers (e.g., DAL should not import from Service)
+
+### Example Import Patterns
+```python
+# Router layer
+from .. import schemas, services
+from apps.core.exceptions import NotFoundError
+
+# Service layer
+from .. import schemas
+from ..repository import bll, dal
+
+# BLL layer
+from .. import models
+from ..repository import dal
+
+# DAL layer
+from .. import models
+```
+
+## Architecture Best Practices
+
+### ✅ DO
+- ✅ Follow the layered architecture pattern
+- ✅ Keep layers separated and focused
+- ✅ Use dependency injection
+- ✅ Return appropriate types from each layer
+- ✅ Follow import rules (no circular dependencies)
+- ✅ Place code in correct directories
+- ✅ Use consistent naming conventions
+
+### ❌ DON'T
+- ❌ Don't skip layers (e.g., router calling DAL directly)
+- ❌ Don't mix responsibilities between layers
+- ❌ Don't create circular dependencies
+- ❌ Don't put app-specific code in core
+- ❌ Don't return wrong types (e.g., models from router)
+- ❌ Don't access database directly from router
+- ❌ Don't put business logic in router
+
+## Example: Complete App Structure
+
+```
+apps/users/
+├── __init__.py
+├── models/
+│   ├── __init__.py
+│   └── user.py
+├── schemas/
+│   ├── __init__.py
+│   └── user.py
+├── services/
+│   ├── __init__.py
+│   └── user_service.py
+├── repository/
+│   ├── __init__.py
+│   ├── dal.py
+│   └── bll.py
+├── routers/
+│   ├── __init__.py
+│   └── router.py
+├── tests/
+│   ├── __init__.py
+│   ├── test_routers.py
+│   ├── test_services.py
+│   └── test_repository.py
+├── helpers/
+│   ├── __init__.py
+│   ├── enums.py
+│   └── exceptions.py
+└── utils/
+    ├── __init__.py
+    └── user_utils.py
+```

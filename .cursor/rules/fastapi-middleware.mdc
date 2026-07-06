@@ -1,0 +1,226 @@
+---
+alwaysApply: true
+---
+
+# FastAPI Middleware - Request/Response Patterns
+
+## Middleware Registration
+
+### Middleware Setup
+- Middleware registered in `apps.core.middleware`
+- Use `register_middleware()` function
+- Middleware order matters (first registered = outermost)
+- Example:
+  ```python
+  from apps.core.middleware import register_middleware
+
+  def create_app() -> FastAPI:
+      app = FastAPI()
+      register_middleware(app)
+      return app
+  ```
+
+### Middleware Order
+- Register in order of execution:
+  1. Security headers
+  2. CORS
+  3. Request size limits
+  4. Rate limiting
+  5. Logging
+  6. Timing
+  7. Debug toolbar (debug only)
+- Example:
+  ```python
+  # In register_middleware()
+  app.add_middleware(SecurityHeadersMiddleware)
+  app.add_middleware(CORSMiddleware, ...)
+  app.add_middleware(RequestSizeLimitMiddleware, ...)
+  app.add_middleware(RateLimitingMiddleware, ...)
+  app.add_middleware(LoggingMiddleware)
+  app.add_middleware(TimingMiddleware)
+  ```
+
+## Custom Middleware
+
+### Middleware Definition
+- Inherit from `BaseHTTPMiddleware`
+- Implement `async def dispatch()`
+- Place in `apps/core/middleware/`
+- Example:
+  ```python
+  from fastapi import Request
+  from starlette.middleware.base import BaseHTTPMiddleware
+  from starlette.responses import Response
+
+  class CustomMiddleware(BaseHTTPMiddleware):
+      async def dispatch(
+          self,
+          request: Request,
+          call_next: Callable,
+      ) -> Response:
+          # Before request
+          response = await call_next(request)
+          # After request
+          return response
+  ```
+
+### Request Processing
+- Access request in middleware
+- Modify request if needed
+- Example:
+  ```python
+  class CustomMiddleware(BaseHTTPMiddleware):
+      async def dispatch(self, request: Request, call_next):
+          # Add custom header
+          request.state.custom_value = "value"
+
+          response = await call_next(request)
+          return response
+  ```
+
+### Response Processing
+- Modify response in middleware
+- Add headers, modify content
+- Example:
+  ```python
+  class CustomMiddleware(BaseHTTPMiddleware):
+      async def dispatch(self, request: Request, call_next):
+          response = await call_next(request)
+
+          # Add custom header
+          response.headers["X-Custom-Header"] = "value"
+          return response
+  ```
+
+## Built-in Middleware
+
+### Security Headers
+- `SecurityHeadersMiddleware` adds security headers
+- Includes CSP, HSTS, X-Frame-Options, etc.
+- Automatically registered
+
+### CORS
+- `CORSMiddleware` handles CORS
+- Configured via settings
+- Example:
+  ```python
+  from fastapi.middleware.cors import CORSMiddleware
+
+  app.add_middleware(
+      CORSMiddleware,
+      allow_origins=settings.CORS_ORIGINS,
+      allow_credentials=True,
+      allow_methods=["*"],
+      allow_headers=["*"],
+  )
+  ```
+
+### Request Size Limits
+- `RequestSizeLimitMiddleware` limits request size
+- Prevents large request attacks
+- Configured via settings
+
+### Rate Limiting
+- `RateLimitingMiddleware` implements rate limiting
+- Configurable per endpoint
+- Uses Redis if available
+
+### Logging
+- `LoggingMiddleware` logs all requests
+- Structured logging with request context
+- Automatically registered
+
+### Timing
+- `TimingMiddleware` adds timing headers
+- `X-Process-Time` header
+- Useful for performance monitoring
+
+## Request State
+
+### Accessing Request State
+- Use `request.state` for request-scoped data
+- Available in route handlers
+- Example:
+  ```python
+  # In middleware
+  request.state.user_id = user_id
+
+  # In route handler
+  @router.get("/items")
+  async def list_items(request: Request):
+      user_id = request.state.user_id
+      pass
+  ```
+
+### Common State Variables
+- `request.state.request_id` - Unique request ID
+- `request.state.start_time` - Request start time
+- `request.state.user` - Authenticated user (if auth enabled)
+- Example:
+  ```python
+  @router.get("/items")
+  async def list_items(request: Request):
+      request_id = request.state.request_id
+      logger.info("Processing request", request_id=request_id)
+  ```
+
+## Response Headers
+
+### Adding Headers
+- Add headers in middleware or route handlers
+- Use `response.headers`
+- Example:
+  ```python
+  @router.get("/items")
+  async def list_items() -> Response:
+      response = ORJSONResponse(content={"items": []})
+      response.headers["X-Custom-Header"] = "value"
+      return response
+  ```
+
+### Standard Headers
+- `X-Request-ID` - Request identifier
+- `X-Process-Time` - Request processing time
+- `X-API-Version` - API version
+- Example:
+  ```python
+  response.headers["X-Request-ID"] = request.state.request_id
+  response.headers["X-Process-Time"] = str(process_time)
+  ```
+
+## Error Handling in Middleware
+
+### Exception Handling
+- Catch exceptions in middleware
+- Return appropriate error responses
+- Example:
+  ```python
+  class ErrorHandlingMiddleware(BaseHTTPMiddleware):
+      async def dispatch(self, request: Request, call_next):
+          try:
+              response = await call_next(request)
+              return response
+          except Exception as e:
+              logger.exception("Middleware error", error=str(e))
+              return ORJSONResponse(
+                  status_code=500,
+                  content={"error": "Internal server error"},
+              )
+  ```
+
+## Best Practices
+
+### Do's
+- ✅ Register middleware in correct order
+- ✅ Use `request.state` for request-scoped data
+- ✅ Add security headers via middleware
+- ✅ Log requests in middleware
+- ✅ Handle errors in middleware
+- ✅ Keep middleware focused and simple
+
+### Don'ts
+- ❌ Don't modify request body in middleware (use dependencies)
+- ❌ Don't add heavy processing in middleware
+- ❌ Don't forget to call `call_next()`
+- ❌ Don't register middleware multiple times
+- ❌ Don't access database in middleware (use dependencies)

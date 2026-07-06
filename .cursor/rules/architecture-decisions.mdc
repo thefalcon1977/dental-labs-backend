@@ -1,0 +1,69 @@
+---
+alwaysApply: true
+---
+
+# Architecture Decisions (ADR-Lite)
+
+## Purpose
+- Capture significant technical choices and their rationale.
+- Keep decisions discoverable, stable, and reviewable.
+- Avoid repeating debates; document context, options, and consequences.
+
+## When to Write an ADR
+- Introducing or changing cross-cutting concerns (auth, caching, idempotency, observability).
+- New external dependencies or protocols.
+- Data model changes with broad impact (schema shape, sharding, tenancy).
+- Changes to deployment/runtime topology (workers, queues, gateways).
+- Altering error/contract semantics or versioning strategy.
+
+## Scope and Placement
+- Store ADRs under `docs/adr/` (one file per decision).
+- Reference the ADR number/name in PR descriptions and relevant code comments if helpful.
+- Keep `.cursor/rules/*` for ongoing norms; ADRs are historical records of decisions.
+
+## Status Lifecycle
+- `Proposed` → under review.
+- `Accepted` → agreed and implemented (or planned with owner/date).
+- `Superseded` → replaced by a newer ADR (link both ways).
+- `Rejected` → considered and declined (keep for future reference).
+
+## ADR Template (concise)
+```
+ADR-N: Title
+Status: Proposed | Accepted | Superseded (ADR-M) | Rejected
+Date: YYYY-MM-DD
+Owner: name/handle
+Context:
+  - Problem and constraints
+Options:
+  - Option A: pros/cons
+  - Option B: pros/cons
+Decision:
+  - Chosen option and why
+Consequences:
+  - Positive: ...
+  - Negative/Risks: ...
+  - Follow-ups: tests, migrations, docs, rollout steps
+Observability:
+  - Metrics/logs/traces to watch (low-cardinality labels)
+Security/Compliance:
+  - Data handling, secrets, PII, access control notes
+Deprecation/Backout:
+  - How to roll back or migrate away
+Links:
+  - Related ADRs/PRs/Issues/Runbooks
+```
+
+## Recording Decisions
+- Be specific: capture constraints, trade-offs, and rejected options.
+- Note rollout plan and ownership.
+- Call out impacts on contracts, migrations, SLOs, and dependencies.
+- Keep labels/metrics low-cardinality when adding observability steps.
+
+## Updating / Superseding
+- Do not edit historical decisions; add a new ADR and mark the old one `Superseded`.
+- Update references in code/docs to point to the current ADR.
+
+## Review Expectations
+- ADRs are reviewed like code: clear problem statement, options, rationale.
+- Seek stakeholders for cross-cutting changes (infra, security, data, product).

@@ -1,0 +1,1085 @@
+---
+alwaysApply: true
+---
+
+# FastAPI Database - SQLAlchemy 2.0 Patterns
+
+## Database Models
+
+### Model Definition
+- All models inherit from `apps.core.db.Base`
+- Use SQLAlchemy 2.0 syntax with `Mapped` and `mapped_column`
+- Place models in `apps/{app_name}/models/`
+- Example:
+  ```python
+  from sqlalchemy.orm import Mapped, mapped_column
+  from sqlalchemy import String, DateTime, func
+  from apps.core.db import Base
+
+  class User(Base):
+      __tablename__ = "users"
+
+      id: Mapped[str] = mapped_column(String(36), primary_key=True)
+      email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+      name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+      created_at: Mapped[datetime] = mapped_column(
+          DateTime(timezone=True),
+          server_default=func.now(),
+      )
+  ```
+
+### Model Relationships
+- Use `relationship()` for relationships
+- Use `Mapped` for relationship types
+- Example:
+  ```python
+  from sqlalchemy.orm import Mapped, relationship
+  from sqlalchemy import ForeignKey
+
+  class User(Base):
+      __tablename__ = "users"
+      id: Mapped[str] = mapped_column(String(36), primary_key=True)
+      posts: Mapped[list["Post"]] = relationship(back_populates="user")
+
+  class Post(Base):
+      __tablename__ = "posts"
+      id: Mapped[str] = mapped_column(String(36), primary_key=True)
+      user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+      user: Mapped["User"] = relationship(back_populates="posts")
+  ```
+
+## Model Mixins for Reusability
+
+### Mixin Pattern Overview
+- **Use mixins** to share common fields and functionality across models
+- Mixins promote code reuse and maintainability
+- Place mixins in `apps/core/models.py` or `apps/{app_name}/models/mixins.py`
+- Mixins should not inherit from `Base` (they're mixed into models that do)
+
+### Timestamp Mixin
+- Common pattern for `created_at` and `updated_at` fields
+- Example:
+  ```python
+  from sqlalchemy import DateTime, func
+  from sqlalchemy.orm import Mapped, mapped_column
+  from datetime import datetime
+
+  class TimestampMixin:
+      """Mixin for timestamp fields."""
+
+      created_at: Mapped[datetime] = mapped_column(
+          DateTime(timezone=True),
+          server_default=func.now(),
+          nullable=False,
+      )
+      updated_at: Mapped[datetime | None] = mapped_column(
+          DateTime(timezone=True),
+          onupdate=func.now(),
+          nullable=True,
+      )
+
+  # Usage
+  class User(Base, TimestampMixin):
+      __tablename__ = "users"
+      id: Mapped[str] = mapped_column(String(36), primary_key=True)
+      email: Mapped[str] = mapped_column(String(255), unique=True)
+  ```
+
+### Primary Key Mixin
+- Reusable primary key pattern
+- Example:
+  ```python
+  from sqlalchemy import String
+  from sqlalchemy.orm import Mapped, mapped_column
+  from uuid import uuid4
+
+  class PrimaryKeyMixin:
+      """Mixin for UUID primary key."""
+
+      id: Mapped[str] = mapped_column(
+          String(36),
+          primary_key=True,
+          default=lambda: str(uuid4()),
+          nullable=False,
+      )
+
+  # Usage
+  class Item(Base, PrimaryKeyMixin, TimestampMixin):
+      __tablename__ = "items"
+      name: Mapped[str] = mapped_column(String(255))
+  ```
+
+### Soft Delete Mixin
+- Pattern for soft-deletable models
+- Example:
+  ```python
+  from sqlalchemy.orm import Mapped, mapped_column
+  from datetime import datetime
+
+  class SoftDeleteMixin:
+      """Mixin for soft delete functionality."""
+
+      deleted_at: Mapped[datetime | None] = mapped_column(
+          DateTime(timezone=True),
+          nullable=True,
+          default=None,
+      )
+      is_deleted: Mapped[bool] = mapped_column(
+          default=False,
+          nullable=False,
+      )
+
+      def soft_delete(self) -> None:
+          """Mark record as deleted."""
+          self.is_deleted = True
+          self.deleted_at = datetime.now(timezone.utc)
+
+      def restore(self) -> None:
+          """Restore soft-deleted record."""
+          self.is_deleted = False
+          self.deleted_at = None
+
+  # Usage
+  class Post(Base, TimestampMixin, SoftDeleteMixin):
+      __tablename__ = "posts"
+      id: Mapped[str] = mapped_column(String(36), primary_key=True)
+      title: Mapped[str] = mapped_column(String(255))
+  ```
+
+### Audit Mixin
+- Track who created/updated records
+- Example:
+  ```python
+  from sqlalchemy import String
+  from sqlalchemy.orm import Mapped, mapped_column
+
+  class AuditMixin:
+      """Mixin for audit fields (created_by, updated_by)."""
+
+      created_by: Mapped[str | None] = mapped_column(
+          String(36),
+          nullable=True,
+      )
+      updated_by: Mapped[str | None] = mapped_column(
+          String(36),
+          nullable=True,
+      )
+
+  # Usage
+  class Document(Base, TimestampMixin, AuditMixin):
+      __tablename__ = "documents"
+      id: Mapped[str] = mapped_column(String(36), primary_key=True)
+      content: Mapped[str] = mapped_column(Text)
+  ```
+
+### Active/Inactive Mixin
+- Pattern for models with active/inactive status
+- Example:
+  ```python
+  from sqlalchemy.orm import Mapped, mapped_column
+
+  class ActiveMixin:
+      """Mixin for active/inactive status."""
+
+      is_active: Mapped[bool] = mapped_column(
+          default=True,
+          nullable=False,
+      )
+      activated_at: Mapped[datetime | None] = mapped_column(
+          DateTime(timezone=True),
+          nullable=True,
+      )
+      deactivated_at: Mapped[datetime | None] = mapped_column(
+          DateTime(timezone=True),
+          nullable=True,
+      )
+
+  # Usage
+  class User(Base, TimestampMixin, ActiveMixin):
+      __tablename__ = "users"
+      id: Mapped[str] = mapped_column(String(36), primary_key=True)
+      email: Mapped[str] = mapped_column(String(255), unique=True)
+  ```
+
+### Base Model with Mixins
+- Create a base model combining common mixins
+- Example:
+  ```python
+  from apps.core.db import Base
+
+  class BaseModel(Base, TimestampMixin):
+      """Base model with common fields."""
+
+      __abstract__ = True  # Don't create table for this model
+
+      id: Mapped[str] = mapped_column(
+          String(36),
+          primary_key=True,
+          default=lambda: str(uuid4()),
+          nullable=False,
+      )
+
+  # Usage - inherit from BaseModel instead of Base
+  class User(BaseModel):
+      __tablename__ = "users"
+      email: Mapped[str] = mapped_column(String(255), unique=True)
+      # Automatically has: id, created_at, updated_at
+  ```
+
+### Multiple Mixins
+- Combine multiple mixins in a single model
+- Order matters: mixins should come before `Base`
+- Example:
+  ```python
+  class Order(Base, TimestampMixin, SoftDeleteMixin, AuditMixin):
+      __tablename__ = "orders"
+      id: Mapped[str] = mapped_column(String(36), primary_key=True)
+      total: Mapped[float] = mapped_column(Numeric(10, 2))
+      # Has: created_at, updated_at, deleted_at, is_deleted, created_by, updated_by
+  ```
+
+### Mixin Best Practices
+- ✅ **Use mixins for common fields** - Timestamps, soft delete, audit
+- ✅ **Keep mixins simple** - Single responsibility
+- ✅ **Document mixins** - Include docstrings
+- ✅ **Use type hints** - All fields should be typed
+- ✅ **Place in core/models.py** - For app-wide mixins
+- ✅ **Create app-specific mixins** - In `apps/{app_name}/models/mixins.py` if needed
+- ✅ **Use `__abstract__ = True`** - For base models that shouldn't create tables
+- ❌ **Don't inherit from Base in mixins** - Mixins are mixed into models
+- ❌ **Don't add business logic to mixins** - Keep them data-only
+- ❌ **Don't create circular dependencies** - Mixins should be independent
+
+### Mixin File Organization
+- Structure:
+  ```
+  apps/core/models.py          # Core mixins (TimestampMixin, etc.)
+  apps/{app_name}/models/
+  ├── __init__.py
+  ├── mixins.py                # App-specific mixins (optional)
+  └── user.py                  # Models using mixins
+  ```
+- Example:
+  ```python
+  # apps/core/models.py
+  class TimestampMixin:
+      """Core timestamp mixin."""
+      # ...
+
+  # apps/users/models/mixins.py (optional)
+  class UserStatusMixin:
+      """User-specific status mixin."""
+      # ...
+
+  # apps/users/models/user.py
+  from apps.core.models import TimestampMixin
+  from .mixins import UserStatusMixin
+
+  class User(Base, TimestampMixin, UserStatusMixin):
+      # ...
+  ```
+
+## Repository Design Pattern
+
+### Architecture Overview
+- **Repository pattern** separates data access from business logic
+- Two-layer architecture: **DAL (Data Access Layer)** and **BLL (Business Logic Layer)**
+- Place repository code in `apps/{app_name}/repository/`
+- Structure:
+  ```
+  apps/{app_name}/repository/
+  ├── __init__.py
+  ├── dal.py      # Data Access Layer (read operations)
+  └── bll.py      # Business Logic Layer (write operations + transactions)
+  ```
+
+### Layer Responsibilities
+
+#### DAL (Data Access Layer) - `dal.py`
+- **Purpose**: Handle all read operations (SELECT queries)
+- **Responsibilities**:
+  - Read-only database queries
+  - SQL-level pagination
+  - Query optimization (eager loading, filtering, ordering)
+  - Minimize database connections
+  - Return raw model instances
+- **Should NOT**: Handle transactions, create/update/delete operations
+
+#### BLL (Business Logic Layer) - `bll.py`
+- **Purpose**: Handle write operations and business logic
+- **Responsibilities**:
+  - Create, update, delete operations
+  - Transaction management
+  - Business rule validation
+  - Coordinate multiple DAL calls if needed
+  - Call DAL for read operations when needed
+- **Should NOT**: Contain raw SQL queries (delegate to DAL)
+
+### Data Flow
+```
+Router → Service → BLL → DAL → Database
+   ↓        ↓       ↓     ↓
+Schema   Schema  Model  Model
+```
+
+## Database Sessions
+
+### Session Dependency
+- Always use `Depends(get_db)` for database sessions
+- Never create sessions manually
+- Sessions are automatically closed
+- Pass session to repository layers
+- Example:
+  ```python
+  from apps.core.db import get_db
+  from sqlalchemy.ext.asyncio import AsyncSession
+
+  @router.get("/items")
+  async def list_items(db: AsyncSession = Depends(get_db)):
+      return await dal.list_items(db)
+  ```
+
+### Session Usage in Repository
+- DAL receives session for read operations
+- BLL receives session for write operations
+- Never create new sessions in repository layers
+- Example:
+  ```python
+  # In dal.py
+  async def get_user(db: AsyncSession, user_id: str) -> User | None:
+      result = await db.execute(select(User).where(User.id == user_id))
+      return result.scalar_one_or_none()
+
+  # In bll.py
+  async def create_user(db: AsyncSession, user_data: UserCreate) -> User:
+      user = User(**user_data.model_dump())
+      db.add(user)
+      await db.commit()
+      await db.refresh(user)
+      return user
+  ```
+
+## DAL (Data Access Layer) - Read Operations
+
+### DAL Structure
+- Place in `apps/{app_name}/repository/dal.py`
+- All functions are async and receive `AsyncSession`
+- Focus on read operations and query optimization
+- Example structure:
+  ```python
+  # apps/users/repository/dal.py
+  """Data Access Layer for user read operations."""
+
+  from sqlalchemy import select
+  from sqlalchemy.ext.asyncio import AsyncSession
+  from sqlalchemy.orm import selectinload
+
+  from .. import models
+  from apps.core.utils import PaginationParams, paginate_query
+
+  async def get_user_by_id(
+      db: AsyncSession,
+      user_id: str,
+  ) -> models.User | None:
+      """Get user by ID.
+
+      Args:
+          db: Database session
+          user_id: User identifier
+
+      Returns:
+          User model or None if not found
+      """
+      result = await db.execute(
+          select(models.User).where(models.User.id == user_id)
+      )
+      return result.scalar_one_or_none()
+
+  async def get_user_by_email(
+      db: AsyncSession,
+      email: str,
+  ) -> models.User | None:
+      """Get user by email.
+
+      Args:
+          db: Database session
+          email: User email
+
+      Returns:
+          User model or None if not found
+      """
+      result = await db.execute(
+          select(models.User).where(models.User.email == email)
+      )
+      return result.scalar_one_or_none()
+
+  async def list_users(
+      db: AsyncSession,
+      pagination: PaginationParams,
+      active_only: bool = True,
+  ) -> tuple[list[models.User], int]:
+      """List users with pagination.
+
+      Args:
+          db: Database session
+          pagination: Pagination parameters
+          active_only: Filter only active users
+
+      Returns:
+          Tuple of (users list, total count)
+      """
+      query = select(models.User)
+
+      if active_only:
+          query = query.where(models.User.active == True)
+
+      query = query.order_by(models.User.created_at.desc())
+
+      return await paginate_query(db, query, pagination)
+  ```
+
+### SQL-Level Pagination in DAL
+- **Always use SQL-level pagination** for list operations
+- Use `paginate_query()` from `apps.core.utils.pagination`
+- Pagination happens at database level (efficient)
+- Example:
+  ```python
+  from apps.core.utils import PaginationParams, paginate_query
+
+  async def list_items(
+      db: AsyncSession,
+      pagination: PaginationParams,
+  ) -> tuple[list[models.Item], int]:
+      """List items with SQL-level pagination.
+
+      Args:
+          db: Database session
+          pagination: Pagination parameters
+
+      Returns:
+          Tuple of (items list, total count)
+      """
+      query = select(models.Item).order_by(models.Item.created_at.desc())
+      return await paginate_query(db, query, pagination)
+  ```
+
+### Query Optimization in DAL
+
+#### Eager Loading
+- Always use eager loading for relationships
+- Prevents N+1 query problems
+- Example:
+  ```python
+  from sqlalchemy.orm import selectinload
+
+  async def get_user_with_posts(
+      db: AsyncSession,
+      user_id: str,
+  ) -> models.User | None:
+      """Get user with posts (eager loading).
+
+      Args:
+          db: Database session
+          user_id: User identifier
+
+      Returns:
+          User model with posts loaded, or None
+      """
+      result = await db.execute(
+          select(models.User)
+          .options(selectinload(models.User.posts))
+          .where(models.User.id == user_id)
+      )
+      return result.scalar_one_or_none()
+  ```
+
+#### Query Filtering
+- Build queries with filters
+- Use `where()`, `and_()`, `or_()` for complex filters
+- Example:
+  ```python
+  from sqlalchemy import and_, or_
+
+  async def search_users(
+      db: AsyncSession,
+      search_term: str | None = None,
+      active_only: bool = True,
+  ) -> list[models.User]:
+      """Search users with filters.
+
+      Args:
+          db: Database session
+          search_term: Search term for name/email
+          active_only: Filter only active users
+
+      Returns:
+          List of matching users
+      """
+      query = select(models.User)
+
+      conditions = []
+      if active_only:
+          conditions.append(models.User.active == True)
+      if search_term:
+          conditions.append(
+              or_(
+                  models.User.name.ilike(f"%{search_term}%"),
+                  models.User.email.ilike(f"%{search_term}%"),
+              )
+          )
+
+      if conditions:
+          query = query.where(and_(*conditions))
+
+      result = await db.execute(query)
+      return result.scalars().all()
+  ```
+
+#### Connection Optimization
+- Minimize database connections
+- Batch multiple reads in single query when possible
+- Use single session for related queries
+- Example:
+  ```python
+  async def get_user_with_related(
+      db: AsyncSession,
+      user_id: str,
+  ) -> models.User | None:
+      """Get user with all related data in single query.
+
+      Args:
+          db: Database session
+          user_id: User identifier
+
+      Returns:
+          User model with all relationships loaded
+      """
+      result = await db.execute(
+          select(models.User)
+          .options(
+              selectinload(models.User.posts),
+              selectinload(models.User.profile),
+              selectinload(models.User.settings),
+          )
+          .where(models.User.id == user_id)
+      )
+      return result.scalar_one_or_none()
+  ```
+
+### DAL Best Practices
+- ✅ Always use `select()` for queries
+- ✅ Use SQL-level pagination for lists
+- ✅ Use eager loading for relationships
+- ✅ Return model instances (not schemas)
+- ✅ Use type hints for all functions
+- ✅ Include docstrings with Args/Returns
+- ✅ Optimize queries to minimize connections
+- ❌ Don't handle transactions (BLL responsibility)
+- ❌ Don't create/update/delete (BLL responsibility)
+- ❌ Don't return schemas (return models)
+
+## BLL (Business Logic Layer) - Write Operations
+
+### BLL Structure
+- Place in `apps/{app_name}/repository/bll.py`
+- Handle all write operations (CREATE, UPDATE, DELETE)
+- Manage transactions
+- Call DAL for read operations when needed
+- Example structure:
+  ```python
+  # apps/users/repository/bll.py
+  """Business Logic Layer for user write operations."""
+
+  from sqlalchemy.ext.asyncio import AsyncSession
+  from sqlalchemy.exc import IntegrityError
+
+  from .. import models, schemas
+  from ..repository import dal
+  from apps.core.exceptions import ConflictError
+
+  async def create_user(
+      db: AsyncSession,
+      user_data: schemas.UserCreate,
+  ) -> models.User:
+      """Create user with business logic.
+
+      Args:
+          db: Database session
+          user_data: User creation data
+
+      Returns:
+          Created user model
+
+      Raises:
+          ConflictError: If user with email already exists
+      """
+      # Check if user exists (via DAL)
+      existing_user = await dal.get_user_by_email(db, user_data.email)
+      if existing_user:
+          raise ConflictError(
+              message="User with this email already exists",
+              details={"email": user_data.email},
+          )
+
+      # Create user
+      user = models.User(**user_data.model_dump())
+      db.add(user)
+      await db.commit()
+      await db.refresh(user)
+
+      return user
+  ```
+
+### Transaction Management in BLL
+- All write operations must be transactional
+- Use try/except for rollback on errors
+- Example:
+  ```python
+  async def create_user_with_profile(
+      db: AsyncSession,
+      user_data: schemas.UserCreate,
+      profile_data: schemas.ProfileCreate,
+  ) -> models.User:
+      """Create user with profile in transaction.
+
+      Args:
+          db: Database session
+          user_data: User creation data
+          profile_data: Profile creation data
+
+      Returns:
+          Created user model
+      """
+      try:
+          # Create user
+          user = models.User(**user_data.model_dump())
+          db.add(user)
+          await db.flush()  # Get user.id without committing
+
+          # Create profile
+          profile = models.Profile(
+              user_id=user.id,
+              **profile_data.model_dump(),
+          )
+          db.add(profile)
+
+          # Commit transaction
+          await db.commit()
+          await db.refresh(user)
+
+          return user
+      except IntegrityError:
+          await db.rollback()
+          raise ConflictError(
+              message="Failed to create user with profile",
+              details={"email": user_data.email},
+          )
+  ```
+
+### Update Operations
+- Get existing entity first (via DAL if needed)
+- Update only provided fields
+- Commit transaction
+- Example:
+  ```python
+  async def update_user(
+      db: AsyncSession,
+      user_id: str,
+      user_data: schemas.UserUpdate,
+  ) -> models.User | None:
+      """Update user with business logic.
+
+      Args:
+          db: Database session
+          user_id: User identifier
+          user_data: User update data
+
+      Returns:
+          Updated user model or None if not found
+      """
+      # Get existing user (via DAL)
+      user = await dal.get_user_by_id(db, user_id)
+      if not user:
+          return None
+
+      # Update only provided fields
+      update_data = user_data.model_dump(exclude_unset=True)
+      for key, value in update_data.items():
+          setattr(user, key, value)
+
+      await db.commit()
+      await db.refresh(user)
+
+      return user
+  ```
+
+### Delete Operations
+- Get entity first (via DAL)
+- Perform business logic checks
+- Delete and commit
+- Example:
+  ```python
+  async def delete_user(
+      db: AsyncSession,
+      user_id: str,
+  ) -> bool:
+      """Delete user with business logic.
+
+      Args:
+          db: Database session
+          user_id: User identifier
+
+      Returns:
+          True if deleted, False if not found
+      """
+      # Get user (via DAL)
+      user = await dal.get_user_by_id(db, user_id)
+      if not user:
+          return False
+
+      # Business logic: Check if user can be deleted
+      if user.has_active_orders:
+          raise ValidationError(
+              message="Cannot delete user with active orders",
+              details={"user_id": user_id},
+          )
+
+      await db.delete(user)
+      await db.commit()
+
+      return True
+  ```
+
+### BLL Calling DAL
+- BLL can call DAL for read operations
+- Use DAL when you need to read before write
+- Example:
+  ```python
+  async def transfer_user_ownership(
+      db: AsyncSession,
+      from_user_id: str,
+      to_user_id: str,
+  ) -> bool:
+      """Transfer ownership with business logic.
+
+      Args:
+          db: Database session
+          from_user_id: Source user ID
+          to_user_id: Target user ID
+
+      Returns:
+          True if successful
+      """
+      # Read operations via DAL
+      from_user = await dal.get_user_by_id(db, from_user_id)
+      to_user = await dal.get_user_by_id(db, to_user_id)
+
+      if not from_user or not to_user:
+          raise NotFoundError(
+              resource="User",
+              identifier=from_user_id or to_user_id,
+          )
+
+      # Write operations in BLL
+      # ... transfer logic ...
+      await db.commit()
+
+      return True
+  ```
+
+### BLL Best Practices
+- ✅ Always handle transactions
+- ✅ Use try/except for rollback
+- ✅ Call DAL for read operations
+- ✅ Validate business rules before writes
+- ✅ Use type hints for all functions
+- ✅ Include docstrings with Args/Returns/Raises
+- ✅ Raise appropriate exceptions
+- ❌ Don't write raw SQL queries (use SQLAlchemy ORM)
+- ❌ Don't skip transaction management
+- ❌ Don't forget to rollback on errors
+- ❌ Don't handle read-only operations (use DAL)
+
+## Database Queries
+
+### SQLAlchemy 2.0 Query Syntax
+- Use `select()` instead of `session.query()`
+- Use `await db.execute()` for queries
+- Example:
+  ```python
+  from sqlalchemy import select
+
+  # Get single item
+  result = await db.execute(select(Item).where(Item.id == item_id))
+  item = result.scalar_one_or_none()
+
+  # Get multiple items
+  result = await db.execute(select(Item))
+  items = result.scalars().all()
+  ```
+
+### Query Patterns
+- Use `scalar_one_or_none()` for single results
+- Use `scalars().all()` for multiple results
+- Use `scalar_one()` when exactly one result expected
+- Example:
+  ```python
+  # Single result (may be None)
+  result = await db.execute(select(User).where(User.email == email))
+  user = result.scalar_one_or_none()
+
+  # Multiple results
+  result = await db.execute(select(Item).where(Item.active == True))
+  items = result.scalars().all()
+
+  # Exactly one result (raises if not found)
+  result = await db.execute(select(User).where(User.id == user_id))
+  user = result.scalar_one()
+  ```
+
+## Repository Usage in Services
+
+### Service Layer Pattern
+- Services orchestrate BLL and DAL operations
+- Services receive database session via dependency injection
+- Services convert models to schemas
+- Example:
+  ```python
+  # apps/users/services/user_service.py
+  """Service layer for user operations."""
+
+  from sqlalchemy.ext.asyncio import AsyncSession
+
+  from .. import schemas
+  from ..repository import bll, dal
+  from apps.core.utils import PaginationParams, PaginatedResponse
+
+  async def get_user(
+      db: AsyncSession,
+      user_id: str,
+  ) -> schemas.UserResponse | None:
+      """Get user by ID.
+
+      Args:
+          db: Database session
+          user_id: User identifier
+
+      Returns:
+          User response or None
+      """
+      user = await dal.get_user_by_id(db, user_id)
+      if user:
+          return schemas.UserResponse.model_validate(user)
+      return None
+
+  async def create_user(
+      db: AsyncSession,
+      user_data: schemas.UserCreate,
+  ) -> schemas.UserResponse:
+      """Create user.
+
+      Args:
+          db: Database session
+          user_data: User creation data
+
+      Returns:
+          Created user response
+      """
+      user = await bll.create_user(db, user_data)
+      return schemas.UserResponse.model_validate(user)
+
+  async def list_users(
+      db: AsyncSession,
+      pagination: PaginationParams,
+  ) -> PaginatedResponse[schemas.UserResponse]:
+      """List users with pagination.
+
+      Args:
+          db: Database session
+          pagination: Pagination parameters
+
+      Returns:
+          Paginated response with users
+      """
+      users, total_items = await dal.list_users(db, pagination)
+
+      items = [
+          schemas.UserResponse.model_validate(user)
+          for user in users
+      ]
+
+      return PaginatedResponse.create(
+          items=items,
+          page=pagination.page,
+          page_size=pagination.page_size,
+          total_items=total_items,
+      )
+  ```
+
+## Transactions
+
+### Transaction Management in BLL
+- All write operations must be transactional
+- Use try/except for error handling and rollback
+- Always rollback on exceptions
+- Example:
+  ```python
+  # In bll.py
+  async def create_with_related(
+      db: AsyncSession,
+      data: CreateData,
+  ) -> models.Item:
+      """Create item with related data in transaction.
+
+      Args:
+          db: Database session
+          data: Creation data
+
+      Returns:
+          Created item model
+      """
+      try:
+          # Create item
+          item = models.Item(**data.item_data.model_dump())
+          db.add(item)
+          await db.flush()  # Get item.id without committing
+
+          # Create related tag
+          tag = models.Tag(
+              item_id=item.id,
+              **data.tag_data.model_dump(),
+          )
+          db.add(tag)
+
+          # Commit entire transaction
+          await db.commit()
+          await db.refresh(item)
+
+          return item
+      except Exception as e:
+          await db.rollback()
+          # Re-raise or convert to appropriate exception
+          raise
+  ```
+
+### Nested Transactions
+- Use `db.begin_nested()` for savepoints
+- Useful for partial rollbacks
+- Example:
+  ```python
+  # In bll.py
+  async def nested_operation(db: AsyncSession):
+      """Operation with nested transaction.
+
+      Args:
+          db: Database session
+      """
+      async with db.begin_nested():
+          # Nested transaction (savepoint)
+          item = models.Item(name="Test")
+          db.add(item)
+          await db.commit()  # Commits to savepoint
+
+      # Outer transaction continues
+      await db.commit()  # Commits outer transaction
+  ```
+
+## Repository File Structure
+
+### Complete Example Structure
+```
+apps/users/repository/
+├── __init__.py
+├── dal.py      # Data Access Layer (read operations)
+└── bll.py      # Business Logic Layer (write operations)
+```
+
+### `__init__.py` Exports
+- Export DAL and BLL functions
+- Example:
+  ```python
+  # apps/users/repository/__init__.py
+  """Repository layer for user operations."""
+
+  from . import dal, bll
+
+  __all__ = ["dal", "bll"]
+  ```
+
+### Import Pattern
+- Services import from repository
+- Example:
+  ```python
+  # In services/user_service.py
+  from ..repository import dal, bll
+
+  # Use DAL for reads
+  user = await dal.get_user_by_id(db, user_id)
+
+  # Use BLL for writes
+  user = await bll.create_user(db, user_data)
+  ```
+
+## Database Health Checks
+
+### Health Check Pattern
+- Use `DatabaseManager.check_health()` for health checks
+- Include timeout to prevent hanging
+- Example:
+  ```python
+  from apps.core.db import get_db_manager_from_app
+
+  async def check_db_health(request: Request) -> bool:
+      db_manager = get_db_manager_from_app(request.app)
+      return await db_manager.check_health(timeout=2.0)
+  ```
+
+## Migrations
+
+### Alembic Migrations
+- Use Alembic for database migrations
+- Create migrations: `python main.py makemigrations -m "message"`
+- Apply migrations: `python main.py migrate`
+- Never edit existing migrations
+- Always test migrations before deploying
+
+## Best Practices
+
+### Repository Pattern Do's
+- ✅ **Separate DAL and BLL** - Clear separation of concerns
+- ✅ **DAL handles all reads** - Optimized read operations
+- ✅ **BLL handles all writes** - Transaction management
+- ✅ **Use SQL-level pagination** - Efficient database pagination
+- ✅ **Minimize database connections** - Batch queries when possible
+- ✅ **Use eager loading** - Prevent N+1 query problems
+- ✅ **Always handle transactions** - Rollback on errors
+- ✅ **Call DAL from BLL** - When reads are needed before writes
+- ✅ **Use type hints** - For all repository functions
+- ✅ **Include docstrings** - Document Args/Returns/Raises
+
+### Repository Pattern Don'ts
+- ❌ **Don't mix read/write in same layer** - Keep DAL and BLL separate
+- ❌ **Don't handle transactions in DAL** - BLL responsibility
+- ❌ **Don't write queries in BLL** - Use DAL for reads
+- ❌ **Don't skip pagination** - Always paginate list operations
+- ❌ **Don't forget rollback** - Always rollback on errors
+- ❌ **Don't create sessions in repository** - Receive via parameter
+- ❌ **Don't return schemas from repository** - Return models
+- ❌ **Don't use Python-level pagination** - Use SQL-level pagination
+
+### General Database Do's
+- ✅ Always use async sessions
+- ✅ Use `select()` for queries
+- ✅ Use type hints for models
+- ✅ Use `Mapped` and `mapped_column`
+- ✅ Handle transactions properly
+- ✅ Use eager loading for relationships
+- ✅ Index frequently queried columns
+
+### General Database Don'ts
+- ❌ Don't use `session.query()` (use `select()`)
+- ❌ Don't use blocking I/O in async functions
+- ❌ Don't create sessions manually
+- ❌ Don't forget to commit transactions
+- ❌ Don't use `session.close()` (handled by dependency)
+- ❌ Don't expose raw SQL queries unless necessary

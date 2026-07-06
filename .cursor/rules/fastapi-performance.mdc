@@ -1,0 +1,263 @@
+---
+alwaysApply: true
+---
+
+# FastAPI Performance - Optimization Patterns
+
+## Response Performance
+
+### ORJSONResponse
+- Always use `ORJSONResponse` for JSON responses
+- Faster serialization than default JSON
+- Already configured as default
+- Example:
+  ```python
+  from fastapi.responses import ORJSONResponse
+
+  @router.get("/items")
+  async def get_items() -> ORJSONResponse:
+      return ORJSONResponse(content={"items": []})
+  ```
+
+### Response Caching
+- Cache responses when appropriate
+- Use HTTP caching headers
+- Example:
+  ```python
+  from fastapi.responses import ORJSONResponse
+
+  @router.get("/items")
+  async def get_items() -> ORJSONResponse:
+      response = ORJSONResponse(content={"items": []})
+      response.headers["Cache-Control"] = "public, max-age=3600"
+      return response
+  ```
+
+## Database Performance
+
+### Query Optimization
+- Use `select()` with specific columns
+- Avoid loading unnecessary data
+- Example:
+  ```python
+  # Good: Select only needed columns
+  result = await db.execute(
+      select(User.id, User.email).where(User.active == True)
+  )
+
+  # Bad: Load all columns
+  result = await db.execute(select(User).where(User.active == True))
+  ```
+
+### Eager Loading
+- Use `selectinload()` or `joinedload()` for relationships
+- Avoid N+1 query problems
+- Example:
+  ```python
+  from sqlalchemy.orm import selectinload
+
+  result = await db.execute(
+      select(User)
+      .options(selectinload(User.posts))
+      .where(User.id == user_id)
+  )
+  user = result.scalar_one()
+  # user.posts is already loaded, no additional queries
+  ```
+
+### Database Indexing
+- Index frequently queried columns
+- Index foreign keys
+- Example:
+  ```python
+  class User(Base):
+      __tablename__ = "users"
+      email: Mapped[str] = mapped_column(
+          String(255),
+          unique=True,
+          index=True,  # Index for fast lookups
+      )
+  ```
+
+### Connection Pooling
+- Configure connection pool size
+- Use appropriate pool settings
+- Example:
+  ```python
+  # In DatabaseManager
+  self._engine = create_async_engine(
+      database_url,
+      pool_size=settings.database.POOL_SIZE,
+      max_overflow=settings.database.MAX_OVERFLOW,
+      pool_pre_ping=True,
+  )
+  ```
+
+## Async Performance
+
+### Async Operations
+- Always use async for I/O operations
+- Use `await` for all async calls
+- Never use blocking I/O in async functions
+- Example:
+  ```python
+  # Good: Async
+  async def get_data():
+      result = await db.execute(select(Item))
+      return result.scalars().all()
+
+  # Bad: Blocking
+  async def get_data():
+      result = db.execute(select(Item))  # Missing await
+      return result.scalars().all()
+  ```
+
+### Concurrent Operations
+- Use `asyncio.gather()` for concurrent operations
+- Example:
+  ```python
+  import asyncio
+
+  async def get_user_data(user_id: str):
+      user, posts, comments = await asyncio.gather(
+          get_user(user_id),
+          get_user_posts(user_id),
+          get_user_comments(user_id),
+      )
+      return user, posts, comments
+  ```
+
+## Caching
+
+### Response Caching
+- Cache expensive computations
+- Use Redis if available
+- Example:
+  ```python
+  from functools import lru_cache
+
+  @lru_cache(maxsize=100)
+  def expensive_computation(input: str) -> str:
+      # Expensive operation
+      return result
+  ```
+
+### Database Query Caching
+- Cache frequently accessed data
+- Invalidate cache on updates
+- Example:
+  ```python
+  async def get_user_cached(user_id: str):
+      # Try cache first
+      cached = await cache.get(f"user:{user_id}")
+      if cached:
+          return cached
+
+      # Fetch from database
+      user = await get_user(user_id)
+
+      # Cache result
+      await cache.set(f"user:{user_id}", user, ttl=3600)
+      return user
+  ```
+
+## Pagination
+
+### Pagination for Lists
+- Always paginate list endpoints
+- Use SQL-level pagination
+- Example:
+  ```python
+  from apps.core.utils import PaginationParams
+
+  @router.get("/items")
+  async def list_items(
+      pagination: PaginationParams = Depends(),
+  ) -> PaginatedResponse[ItemResponse]:
+      return await services.list_items(pagination)
+  ```
+
+### Limit Results
+- Set reasonable page sizes
+- Default: 20 items per page
+- Maximum: 100 items per page
+- Example:
+  ```python
+  class PaginationParams:
+      page: int = Query(1, ge=1)
+      page_size: int = Query(20, ge=1, le=100)
+  ```
+
+## Background Tasks
+
+### Background Processing
+- Use FastAPI BackgroundTasks for non-critical work
+- Example:
+  ```python
+  from fastapi import BackgroundTasks
+
+  @router.post("/items")
+  async def create_item(
+      item: ItemCreate,
+      background_tasks: BackgroundTasks,
+  ) -> ItemResponse:
+      item = await services.create_item(item)
+
+      # Add background task
+      background_tasks.add_task(send_notification, item.id)
+
+      return ItemResponse.model_validate(item)
+  ```
+
+## Monitoring
+
+### Performance Metrics
+- Use Prometheus metrics
+- Monitor request times
+- Monitor database query times
+- Example:
+  ```python
+  from config.metrics import record_request_time
+
+  @router.get("/items")
+  async def get_items():
+      start_time = time.time()
+      items = await services.list_items()
+      record_request_time("get_items", time.time() - start_time)
+      return items
+  ```
+
+### Logging Performance
+- Log slow requests
+- Use timing middleware
+- Example:
+  ```python
+  # TimingMiddleware adds X-Process-Time header
+  # Log requests taking > 1 second
+  if process_time > 1.0:
+      logger.warning(
+          "Slow request",
+          path=request.url.path,
+          process_time=process_time,
+      )
+  ```
+
+## Best Practices
+
+### Do's
+- ✅ Use ORJSONResponse
+- ✅ Optimize database queries
+- ✅ Use eager loading for relationships
+- ✅ Index frequently queried columns
+- ✅ Paginate list endpoints
+- ✅ Use async for all I/O
+- ✅ Cache expensive operations
+- ✅ Monitor performance metrics
+
+### Don'ts
+- ❌ Don't load unnecessary data
+- ❌ Don't use blocking I/O in async functions
+- ❌ Don't forget to paginate large lists
+- ❌ Don't skip database indexing
+- ❌ Don't make unnecessary database queries
+- ❌ Don't cache without invalidation strategy

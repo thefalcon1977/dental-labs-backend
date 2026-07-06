@@ -1,0 +1,40 @@
+---
+alwaysApply: true
+---
+
+# API Versioning - Strategy and Practices
+
+## Goals
+- Provide predictable, backward-compatible APIs.
+- Minimize breaking changes; deprecate before removal.
+
+## Versioning Model
+- Use **URI versioning** for public APIs: `/v1/...`, `/v2/...`.
+- Internal-only endpoints can omit versioning but should still avoid breaking changes.
+- Each major version is a contract; only additive/minor changes within a version.
+
+## Breaking vs Non-Breaking
+- **Non-breaking (allowed in-place)**: add fields (optional), add endpoints, add enums values (if clients tolerate), performance/internal fixes.
+- **Breaking (requires new version)**: remove/rename fields, change types/shapes, change required fields, change semantics or status codes.
+
+## Deprecation Policy
+- Mark endpoints/fields as deprecated in OpenAPI.
+- Communicate timeline; keep old behavior until the announced removal date.
+- Provide migration notes and examples.
+
+## Request/Response Contracts
+- Never repurpose a field; add a new one instead.
+- Keep default behaviors stable; new behavior should be opt-in.
+- Document status codes; do not change them without versioning.
+
+## Compatibility Testing
+- Add contract tests for each version.
+- Guard against accidental removals/renames in CI if possible.
+
+## Observability for Versions
+- Log `version` (route or header) for requests.
+- Consider metrics by templated route and version (low-cardinality).
+
+## Rollout
+- Support old and new versions in parallel during migration.
+- Prefer additive rollout: ship v2 alongside v1; remove v1 after deprecation period.

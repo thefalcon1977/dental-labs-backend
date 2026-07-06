@@ -1,0 +1,182 @@
+---
+alwaysApply: true
+---
+
+# FastAPI Basics - Core Patterns
+
+## Application Structure
+
+### App Factory Pattern
+- Always use an app factory pattern (`create_app()` function)
+- Use lifespan context manager for startup/shutdown logic
+- Store shared resources in `app.state` (e.g., `app.state.db_manager`)
+- Use `ORJSONResponse` as default response class for better performance
+- Example:
+  ```python
+  from fastapi import FastAPI
+  from fastapi.responses import ORJSONResponse
+  from contextlib import asynccontextmanager
+
+  @asynccontextmanager
+  async def lifespan(app: FastAPI):
+      # Startup
+      db_manager = DatabaseManager()
+      await db_manager.initialize()
+      app.state.db_manager = db_manager
+      yield
+      # Shutdown
+      await db_manager.close()
+
+  def create_app() -> FastAPI:
+      app = FastAPI(
+          title="Service Name",
+          version=__version__,
+          lifespan=lifespan,
+          default_response_class=ORJSONResponse,
+      )
+      return app
+  ```
+
+### Multi-App Architecture
+- Organize code into apps: `apps/{app_name}/`
+- Each app should have: `routers/`, `schemas/`, `services/`, `models/`
+- Use automatic router discovery from `apps/` directory
+- Mount routers with prefix: `app.include_router(router, prefix="/app_name", tags=["app_name"])`
+
+## Async/Await Patterns
+
+### All Route Handlers Must Be Async
+- Always use `async def` for route handlers
+- Never use blocking I/O operations in async functions
+- Use `await` for all async operations
+- Example:
+  ```python
+  @router.get("/items")
+  async def get_items(db: AsyncSession = Depends(get_db)):
+      items = await db.execute(select(Item))
+      return items.scalars().all()
+  ```
+
+### Database Sessions
+- Always use dependency injection for database sessions
+- Use `Depends(get_db)` pattern
+- Never create sessions manually
+- Sessions are automatically closed by dependency
+- Example:
+  ```python
+  from apps.core.db import get_db
+  from sqlalchemy.ext.asyncio import AsyncSession
+
+  @router.get("/items")
+  async def get_items(db: AsyncSession = Depends(get_db)):
+      # Use db session
+      pass
+  ```
+
+## Dependency Injection
+
+### FastAPI Dependencies
+- Use `Depends()` for all dependencies
+- Access app state via `Request` object: `request.app.state`
+- Never use global variables
+- Example:
+  ```python
+  from fastapi import Depends, Request
+
+  async def get_service(request: Request):
+      return request.app.state.service
+
+  @router.get("/endpoint")
+  async def endpoint(service = Depends(get_service)):
+      pass
+  ```
+
+### Database Manager Access
+- Get database manager from app state
+- Use helper function: `get_db_manager_from_app(request.app)`
+- Example:
+  ```python
+  from apps.core.db import get_db_manager_from_app
+
+  async def check_db_health(request: Request):
+      db_manager = get_db_manager_from_app(request.app)
+      return await db_manager.check_health()
+  ```
+
+## Response Patterns
+
+### Always Use ORJSONResponse
+- Use `ORJSONResponse` instead of default `Response`
+- Better performance with orjson serialization
+- Import: `from fastapi.responses import ORJSONResponse`
+- Example:
+  ```python
+  from fastapi.responses import ORJSONResponse
+
+  @router.get("/custom")
+  async def custom_endpoint() -> ORJSONResponse:
+      return ORJSONResponse(
+          content={"message": "Success"},
+          status_code=status.HTTP_200_OK,
+      )
+  ```
+
+### Response Models
+- Always define `response_model` in route decorators
+- Use Pydantic models for response validation
+- Example:
+  ```python
+  @router.get(
+      "/items",
+      response_model=list[ItemResponse],
+      status_code=status.HTTP_200_OK,
+  )
+  async def get_items() -> list[ItemResponse]:
+      return [ItemResponse.model_validate(item) for item in items]
+  ```
+
+## Configuration Access
+
+### Settings Pattern
+- Import settings: `from config.settings import settings`
+- Access nested settings: `settings.database.ENABLED`
+- Never hardcode configuration values
+- Example:
+  ```python
+  from config.settings import settings
+
+  if settings.database.ENABLED:
+      # Use database
+      pass
+  ```
+
+## Logging
+
+### Structured Logging
+- Use structured logging with keyword arguments
+- Import: `from config.logging import get_logger`
+- Create logger: `logger = get_logger(__name__)`
+- Example:
+  ```python
+  from config.logging import get_logger
+
+  logger = get_logger(__name__)
+
+  logger.info("User created", user_id=user_id, email=email)
+  logger.error("Failed to process", error=str(e), user_id=user_id)
+  ```
+
+## Version Management
+
+### Version Access
+- Import: `from apps.core.version import __version__`
+- Never hardcode version strings
+- Use in app creation and endpoints
+- Example:
+  ```python
+  from apps.core.version import __version__
+
+  @router.get("/version")
+  async def version() -> dict:
+      return {"version": __version__}
+  ```

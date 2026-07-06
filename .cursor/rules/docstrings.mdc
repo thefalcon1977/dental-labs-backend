@@ -1,0 +1,452 @@
+---
+alwaysApply: true
+---
+
+# Docstrings - Standards and Best Practices
+
+## Docstring Requirements
+
+### Always Include Docstrings
+- **All functions** must have docstrings
+- **All classes** must have docstrings
+- **All modules** must have docstrings
+- **All public methods** must have docstrings
+- **Docstrings are mandatory** - not optional
+
+### Docstring Style
+- Use **Google-style docstrings**
+- Follow consistent format across the codebase
+- Include type information when helpful
+- Be clear and concise
+
+## Docstring Format
+
+### Function Docstrings
+- Brief description on first line
+- Longer description if needed
+- Args section for parameters
+- Returns section for return value
+- Raises section for exceptions
+- Example:
+  ```python
+  async def create_user(
+      db: AsyncSession,
+      user_data: UserCreate,
+  ) -> User:
+      """Create a new user.
+
+      Creates a user in the database with the provided data.
+      Validates email uniqueness before creation.
+
+      Args:
+          db: Database session for database operations
+          user_data: User creation data including email and name
+
+      Returns:
+          Created user model instance
+
+      Raises:
+          ConflictError: If user with email already exists
+          ValidationError: If user data is invalid
+      """
+      pass
+  ```
+
+### Class Docstrings
+- Brief description of the class
+- Longer description if needed
+- Attributes section for class attributes
+- Example:
+  ```python
+  class UserService:
+      """Service for user-related operations.
+
+      This service orchestrates user business logic and coordinates
+      between repository layers and external services.
+
+      Attributes:
+          logger: Logger instance for this service
+      """
+
+      def __init__(self) -> None:
+          """Initialize user service."""
+          self.logger = get_logger(__name__)
+  ```
+
+### Module Docstrings
+- Brief description of the module
+- Purpose and usage
+- Example:
+  ```python
+  """User service layer for business logic orchestration.
+
+  This module provides service functions that coordinate between
+  the router layer and repository layer (BLL/DAL).
+
+  Services handle:
+  - Business logic orchestration
+  - Schema conversion (models to schemas)
+  - Error handling and validation
+  """
+  ```
+
+## Docstring Sections
+
+### Args Section
+- List all parameters
+- Include type and description
+- Use consistent format
+- Example:
+  ```python
+  """Process user data.
+
+  Args:
+      user_id: User identifier (UUID string)
+      include_profile: Whether to include user profile data
+      db: Database session for queries
+  """
+  ```
+
+### Returns Section
+- Describe return value
+- Include type information
+- Mention `None` if applicable
+- Example:
+  ```python
+  """Get user by ID.
+
+  Returns:
+      User model instance if found, None otherwise
+  """
+  ```
+
+### Raises Section
+- List all exceptions that can be raised
+- Include when each exception is raised
+- Example:
+  ```python
+  """Create user account.
+
+  Raises:
+      ConflictError: If user with email already exists
+      ValidationError: If email format is invalid
+      DatabaseError: If database operation fails
+  """
+  ```
+
+### Yields Section (for generators)
+- Describe yielded values
+- Example:
+  ```python
+  """Generate user IDs.
+
+  Yields:
+      User ID strings in sequence
+  """
+  ```
+
+## Docstring Content Guidelines
+
+### Be Clear and Concise
+- Use clear, simple language
+- Avoid jargon when possible
+- Be specific, not vague
+- Example:
+  ```python
+  # ✅ GOOD - Clear and specific
+  """Calculate total order amount including taxes and shipping."""
+
+  # ❌ BAD - Vague
+  """Calculate order."""
+  ```
+
+### Include Important Details
+- Document side effects
+- Document parameter constraints
+- Document return value conditions
+- Example:
+  ```python
+  """Process payment for order.
+
+  Processes payment using the specified payment method.
+  Updates order status to 'paid' on success.
+
+  Args:
+      order_id: Order identifier
+      payment_method: Payment method (credit_card, paypal, bank_transfer)
+      amount: Payment amount (must match order total)
+
+  Returns:
+      Payment confirmation ID
+
+  Raises:
+      NotFoundError: If order not found
+      ValidationError: If amount doesn't match order total
+      PaymentError: If payment processing fails
+  """
+  ```
+
+### Document Complex Logic
+- Explain why, not just what
+- Document algorithms or business rules
+- Example:
+  ```python
+  """Calculate discount for order.
+
+  Applies discount based on order total and customer tier:
+  - Bronze: 5% discount for orders > $100
+  - Silver: 10% discount for orders > $200
+  - Gold: 15% discount for orders > $500
+
+  Args:
+      order_total: Total order amount
+      customer_tier: Customer tier (bronze, silver, gold)
+
+  Returns:
+      Discount amount (0 if no discount applies)
+  """
+  ```
+
+## Repository Pattern Docstrings
+
+### DAL Functions
+- Document query behavior
+- Document return conditions
+- Example:
+  ```python
+  async def get_user_by_id(
+      db: AsyncSession,
+      user_id: str,
+  ) -> models.User | None:
+      """Get user by ID from database.
+
+      Performs a simple SELECT query to retrieve user by primary key.
+      Does not load relationships (use eager loading if needed).
+
+      Args:
+          db: Database session
+          user_id: User identifier (UUID string)
+
+      Returns:
+          User model instance if found, None otherwise
+      """
+      pass
+  ```
+
+### BLL Functions
+- Document business logic
+- Document transaction behavior
+- Document side effects
+- Example:
+  ```python
+  async def create_user(
+      db: AsyncSession,
+      user_data: schemas.UserCreate,
+  ) -> models.User:
+      """Create user with business logic.
+
+      Creates a new user in the database with the following business rules:
+      1. Validates email uniqueness
+      2. Normalizes email (lowercase, trim)
+      3. Sets default role to 'user'
+      4. Creates user profile record
+
+      All operations are performed in a single transaction.
+
+      Args:
+          db: Database session
+          user_data: User creation data
+
+      Returns:
+          Created user model instance
+
+      Raises:
+          ConflictError: If user with email already exists
+      """
+      pass
+  ```
+
+### Service Functions
+- Document orchestration logic
+- Document schema conversion
+- Example:
+  ```python
+  async def create_user(
+      db: AsyncSession,
+      user_data: schemas.UserCreate,
+  ) -> schemas.UserResponse:
+      """Create user and return response.
+
+      Orchestrates user creation by:
+      1. Calling BLL to create user (with business logic)
+      2. Converting model to response schema
+      3. Logging creation event
+
+      Args:
+          db: Database session
+          user_data: User creation data
+
+      Returns:
+          User response schema
+
+      Raises:
+          ConflictError: If user with email already exists
+      """
+      pass
+  ```
+
+## FastAPI Route Handler Docstrings
+
+### Route Handler Documentation
+- Brief description of endpoint
+- Document request/response
+- Document status codes
+- Example:
+  ```python
+  @router.post(
+      "/users",
+      response_model=UserResponse,
+      status_code=status.HTTP_201_CREATED,
+  )
+  async def create_user(
+      user_data: UserCreate,
+      db: AsyncSession = Depends(get_db),
+  ) -> UserResponse:
+      """Create a new user account.
+
+      Creates a new user with the provided email and name.
+      Email must be unique. Returns created user data.
+
+      Args:
+          user_data: User creation data (email, name)
+          db: Database session (injected)
+
+      Returns:
+          Created user response with ID and timestamps
+
+      Raises:
+          ConflictError: If user with email already exists (409)
+          ValidationError: If input data is invalid (422)
+      """
+      pass
+  ```
+
+## Docstring Best Practices
+
+### ✅ DO
+- ✅ Always include docstrings
+- ✅ Use Google-style format
+- ✅ Be clear and concise
+- ✅ Document all parameters
+- ✅ Document return values
+- ✅ Document exceptions
+- ✅ Include examples for complex functions
+- ✅ Update docstrings when code changes
+- ✅ Use consistent format across codebase
+
+### ❌ DON'T
+- ❌ Don't skip docstrings
+- ❌ Don't write obvious docstrings ("Gets user")
+- ❌ Don't duplicate type hints in docstrings
+- ❌ Don't use inconsistent formats
+- ❌ Don't write vague descriptions
+- ❌ Don't forget to document exceptions
+- ❌ Don't leave outdated docstrings
+
+## Examples
+
+### Complete Example: Well-Documented Function
+```python
+async def transfer_funds(
+    db: AsyncSession,
+    from_account_id: str,
+    to_account_id: str,
+    amount: float,
+) -> bool:
+    """Transfer funds between accounts.
+
+    Transfers the specified amount from one account to another.
+    Both accounts must exist and have sufficient balance.
+    All operations are performed in a single transaction.
+
+    Args:
+        db: Database session for transaction management
+        from_account_id: Source account identifier
+        to_account_id: Destination account identifier
+        amount: Transfer amount (must be positive)
+
+    Returns:
+        True if transfer successful, False otherwise
+
+    Raises:
+        NotFoundError: If either account not found
+        ValidationError: If amount is invalid or insufficient balance
+        DatabaseError: If transaction fails
+
+    Example:
+        ```python
+        success = await transfer_funds(
+            db=db,
+            from_account_id="acc_123",
+            to_account_id="acc_456",
+            amount=100.0,
+        )
+        ```
+    """
+    pass
+```
+
+### Complete Example: Well-Documented Class
+```python
+class PaymentProcessor:
+    """Payment processing service.
+
+    Handles payment processing for various payment methods.
+    Supports credit cards, PayPal, and bank transfers.
+
+    Attributes:
+        logger: Logger instance for payment operations
+        retry_count: Number of retry attempts for failed payments
+        timeout_seconds: Request timeout in seconds
+    """
+
+    def __init__(
+        self,
+        retry_count: int = 3,
+        timeout_seconds: int = 30,
+    ) -> None:
+        """Initialize payment processor.
+
+        Args:
+            retry_count: Number of retry attempts (default: 3)
+            timeout_seconds: Request timeout in seconds (default: 30)
+        """
+        self.logger = get_logger(__name__)
+        self.retry_count = retry_count
+        self.timeout_seconds = timeout_seconds
+
+    async def process_payment(
+        self,
+        order_id: str,
+        amount: float,
+        method: str,
+    ) -> PaymentResult:
+        """Process payment for order.
+
+        Processes payment using the specified method with retry logic.
+        Logs all payment attempts and results.
+
+        Args:
+            order_id: Order identifier
+            amount: Payment amount
+            method: Payment method (credit_card, paypal, bank_transfer)
+
+        Returns:
+            Payment result with transaction ID and status
+
+        Raises:
+            PaymentError: If payment processing fails after retries
+            ValidationError: If payment method is invalid
+        """
+        pass
+```

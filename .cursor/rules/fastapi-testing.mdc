@@ -1,0 +1,298 @@
+---
+alwaysApply: true
+---
+
+# FastAPI Testing - Test Patterns
+
+## Test Structure
+
+### Test Organization
+- Place tests in `apps/{app_name}/tests/`
+- Mirror app structure in tests
+- Use pytest with pytest-asyncio
+- Example structure:
+  ```
+  apps/users/tests/
+  ├── __init__.py
+  ├── test_routers.py
+  ├── test_services.py
+  └── test_repository.py
+  ```
+
+### Test File Naming
+- Use `test_` prefix for test files
+- Match module names: `test_routers.py`, `test_services.py`
+- Example:
+  ```python
+  # apps/users/tests/test_routers.py
+  import pytest
+  from httpx import AsyncClient
+
+  @pytest.mark.asyncio
+  async def test_create_user(client: AsyncClient):
+      pass
+  ```
+
+## Test Client
+
+### AsyncClient Setup
+- Use `httpx.AsyncClient` for async tests
+- Use `TestClient` for sync tests (not recommended)
+- Example:
+  ```python
+  import pytest
+  from httpx import AsyncClient
+  from main import app
+
+  @pytest.fixture
+  async def client():
+      async with AsyncClient(app=app, base_url="http://test") as ac:
+          yield ac
+  ```
+
+### Test Client Fixture
+- Create reusable client fixture
+- Example:
+  ```python
+  # conftest.py
+  import pytest
+  from httpx import AsyncClient
+  from main import app
+
+  @pytest.fixture
+  async def client():
+      async with AsyncClient(app=app, base_url="http://test") as ac:
+          yield ac
+  ```
+
+## Router Tests
+
+### Endpoint Testing
+- Test all endpoints
+- Test success and error cases
+- Example:
+  ```python
+  @pytest.mark.asyncio
+  async def test_get_item_success(client: AsyncClient):
+      response = await client.get("/items/123")
+      assert response.status_code == 200
+      assert response.json()["id"] == "123"
+
+  @pytest.mark.asyncio
+  async def test_get_item_not_found(client: AsyncClient):
+      response = await client.get("/items/999")
+      assert response.status_code == 404
+      assert "error" in response.json()
+  ```
+
+### Request Body Testing
+- Test request validation
+- Test invalid data
+- Example:
+  ```python
+  @pytest.mark.asyncio
+  async def test_create_item_success(client: AsyncClient):
+      data = {"name": "Test Item", "price": 10.0}
+      response = await client.post("/items", json=data)
+      assert response.status_code == 201
+      assert response.json()["name"] == "Test Item"
+
+  @pytest.mark.asyncio
+  async def test_create_item_invalid_data(client: AsyncClient):
+      data = {"name": ""}  # Invalid: empty name
+      response = await client.post("/items", json=data)
+      assert response.status_code == 422
+  ```
+
+## Database Tests
+
+### Test Database Setup
+- Use separate test database
+- Use fixtures for database setup/teardown
+- Example:
+  ```python
+  import pytest
+  from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+  from sqlalchemy.orm import sessionmaker
+  from apps.core.db import Base
+
+  @pytest.fixture
+  async def db_session():
+      engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+      async with engine.begin() as conn:
+          await conn.run_sync(Base.metadata.create_all)
+
+      async_session = sessionmaker(engine, class_=AsyncSession)
+      async with async_session() as session:
+          yield session
+
+      await engine.dispose()
+  ```
+
+### Database Fixtures
+- Create test data fixtures
+- Example:
+  ```python
+  @pytest.fixture
+  async def test_user(db_session: AsyncSession):
+      user = User(email="test@example.com", name="Test User")
+      db_session.add(user)
+      await db_session.commit()
+      await db_session.refresh(user)
+      return user
+  ```
+
+## Service Tests
+
+### Service Testing
+- Test business logic
+- Mock dependencies
+- Example:
+  ```python
+  @pytest.mark.asyncio
+  async def test_create_user_service(db_session: AsyncSession):
+      user_data = UserCreate(email="test@example.com", name="Test")
+      user = await services.create_user(db_session, user_data)
+
+      assert user.email == "test@example.com"
+      assert user.id is not None
+  ```
+
+### Mocking Dependencies
+- Use `unittest.mock` or `pytest-mock`
+- Example:
+  ```python
+  from unittest.mock import AsyncMock
+
+  @pytest.mark.asyncio
+  async def test_service_with_mock(mocker):
+      mock_repository = mocker.patch("apps.users.repository.get_user")
+      mock_repository.return_value = User(id="123", email="test@example.com")
+
+      result = await services.get_user("123")
+      assert result.email == "test@example.com"
+  ```
+
+## Repository Tests
+
+### Repository Testing
+- Test database operations
+- Use test database
+- Example:
+  ```python
+  @pytest.mark.asyncio
+  async def test_create_user_repository(db_session: AsyncSession):
+      user = await repository.create_user(
+          db_session,
+          email="test@example.com",
+          name="Test User",
+      )
+
+      assert user.id is not None
+      assert user.email == "test@example.com"
+  ```
+
+## Test Fixtures
+
+### Common Fixtures
+- Create reusable fixtures
+- Place in `conftest.py`
+- Example:
+  ```python
+  # conftest.py
+  import pytest
+  from httpx import AsyncClient
+  from main import app
+
+  @pytest.fixture
+  async def client():
+      async with AsyncClient(app=app, base_url="http://test") as ac:
+          yield ac
+
+  @pytest.fixture
+  async def db_session():
+      # Database setup
+      yield session
+      # Cleanup
+  ```
+
+## Test Assertions
+
+### Response Assertions
+- Assert status codes
+- Assert response structure
+- Assert response data
+- Example:
+  ```python
+  response = await client.get("/items/123")
+
+  assert response.status_code == 200
+  assert "id" in response.json()
+  assert response.json()["id"] == "123"
+  assert response.json()["name"] == "Test Item"
+  ```
+
+### Error Response Assertions
+- Assert error structure
+- Assert error messages
+- Example:
+  ```python
+  response = await client.get("/items/999")
+
+  assert response.status_code == 404
+  assert "error" in response.json()
+  assert response.json()["error"]["type"] == "NotFoundError"
+  ```
+
+## Integration Tests
+
+### Integration Testing
+- Test full request/response cycle
+- Test with real database
+- Example:
+  ```python
+  @pytest.mark.asyncio
+  async def test_create_and_get_item(client: AsyncClient, db_session):
+      # Create item
+      create_response = await client.post(
+          "/items",
+          json={"name": "Test Item", "price": 10.0},
+      )
+      assert create_response.status_code == 201
+      item_id = create_response.json()["id"]
+
+      # Get item
+      get_response = await client.get(f"/items/{item_id}")
+      assert get_response.status_code == 200
+      assert get_response.json()["name"] == "Test Item"
+  ```
+
+## Test Coverage
+
+### Coverage Requirements
+- Aim for high test coverage
+- Test all endpoints
+- Test error cases
+- Use `pytest-cov` for coverage
+- Example:
+  ```bash
+  pytest --cov=apps --cov-report=html
+  ```
+
+## Best Practices
+
+### Do's
+- ✅ Use async test functions
+- ✅ Use fixtures for setup/teardown
+- ✅ Test both success and error cases
+- ✅ Use descriptive test names
+- ✅ Keep tests isolated
+- ✅ Use test database
+- ✅ Mock external dependencies
+
+### Don'ts
+- ❌ Don't use real database for tests
+- ❌ Don't skip error case tests
+- ❌ Don't make tests depend on each other
+- ❌ Don't use blocking I/O in async tests
+- ❌ Don't forget to clean up test data

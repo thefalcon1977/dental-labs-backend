@@ -1,0 +1,130 @@
+---
+alwaysApply: true
+---
+
+# Security - Application Best Practices
+
+## Scope and Relationship to Existing Rules
+- This file adds **application-layer** security guidance.
+- For middleware-level hardening (security headers, rate limiting, request size limits), refer to `SECURITY.md` and `fastapi-middleware.mdc`.
+- For exception formatting and not leaking internals, refer to `fastapi-error-handling.mdc`.
+- For Docker hardening, refer to `docker.mdc`.
+
+## Core Principles
+
+### Least Privilege
+- Give services the **minimum permissions** needed (DB roles, Keycloak scopes, network access).
+- Prefer **deny-by-default** and allowlist rules.
+
+### Fail Securely
+- Deny access on auth/permission uncertainty.
+- Treat unexpected errors as **500** with **no sensitive detail** in responses.
+
+### Never Trust Input
+- Validate input at the boundary (request schemas + explicit checks).
+- Treat headers, query params, and external payloads as untrusted.
+
+## Secrets and Sensitive Data
+
+### ✅ DO
+- ✅ Load secrets via Dynaconf/env vars (never hardcode).
+- ✅ Use secret scanning friendly patterns (no inline tokens in code).
+- ✅ Treat the following as **sensitive**:
+  - passwords, API keys, OAuth client secrets
+  - JWTs, refresh tokens, session identifiers
+  - database URLs containing credentials
+  - personal identifiers (email, phone, national IDs), financial info
+
+### ❌ DON'T
+- ❌ Don’t commit secrets in code, tests, docs, or examples.
+- ❌ Don’t log secrets or full auth headers.
+- ❌ Don’t include sensitive values in exception `details`.
+
+## Logging and Redaction (Security Angle)
+- Follow `fastapi-logging.mdc` for logging style.
+- **Never log**:
+  - `Authorization` header, cookies, tokens
+  - raw request bodies for auth/payment endpoints
+  - full PII; log stable IDs instead
+- Prefer **hashing** or **partial masking** when you must include identifiers:
+  - `email_hash`, `phone_last4`, `user_id`
+
+## Authentication and Authorization
+
+### ✅ DO
+- ✅ Enforce authentication via dependencies (e.g., Keycloak/JWT dependency).
+- ✅ Enforce authorization in a **single place** (dependency/policy), not scattered in routers.
+- ✅ Use **principle of least privilege** for roles/scopes.
+- ✅ Return **401** for missing/invalid auth and **403** for insufficient permissions.
+
+### ❌ DON'T
+- ❌ Don’t roll your own crypto or JWT verification.
+- ❌ Don’t trust client-supplied roles/claims without verification.
+
+## Input Validation and Output Safety
+
+### ✅ DO
+- ✅ Use Pydantic schemas for all request bodies.
+- ✅ Validate IDs, enums, and constrained strings (length, regex) in schemas where possible.
+- ✅ Normalize user input (trim, lowercase where appropriate) *before* persisting.
+
+### ❌ DON'T
+- ❌ Don’t accept arbitrary dicts as request bodies for domain endpoints.
+- ❌ Don’t echo untrusted input in error messages unless sanitized.
+
+## Database Safety
+
+### ✅ DO
+- ✅ Use SQLAlchemy query building (avoid string concatenation).
+- ✅ Keep write operations transactional (BLL responsibility).
+- ✅ Add unique constraints for natural keys when appropriate.
+- ✅ Use pagination for list endpoints.
+
+### ❌ DON'T
+- ❌ Don’t run raw SQL with interpolated strings.
+- ❌ Don’t expose internal database errors to clients.
+
+## SSRF / Outbound Requests
+
+### ✅ DO
+- ✅ Use allowlists for outbound HTTP destinations (host + scheme).
+- ✅ Set strict timeouts and limits for outbound requests.
+- ✅ Validate URLs before fetching.
+
+### ❌ DON'T
+- ❌ Don’t fetch arbitrary URLs provided by users without validation.
+- ❌ Don’t allow access to link-local / metadata IPs (e.g., `169.254.169.254`).
+
+## File Uploads (If/When Added)
+
+### ✅ DO
+- ✅ Enforce max upload size (middleware + endpoint checks).
+- ✅ Validate content type and file extension.
+- ✅ Store uploads outside of container filesystem for production (object storage).
+
+### ❌ DON'T
+- ❌ Don’t trust MIME types from clients.
+- ❌ Don’t execute or import uploaded files.
+
+## CORS and Browser Security
+- Follow `fastapi-middleware.mdc` and `SECURITY.md`.
+- Avoid wildcard origins with credentials.
+- Keep CSP strict if serving any HTML assets (rare for pure APIs).
+
+## Dependency and Supply Chain Security
+
+### ✅ DO
+- ✅ Pin dependencies and review upgrades.
+- ✅ Prefer well-maintained libraries with clear security posture.
+- ✅ Run vulnerability scans in CI where possible.
+
+### ❌ DON'T
+- ❌ Don’t add dependencies for small utilities if standard library suffices.
+
+## Security Review Checklist (Before Merging)
+- **Auth**: endpoints protected and permission checks correct
+- **Input**: schema validation + constraints in place
+- **Logging**: no sensitive fields logged
+- **Errors**: no internal details returned to clients
+- **Outbound**: SSRF protections for any external calls
+- **Data**: PII minimized, stored and handled appropriately

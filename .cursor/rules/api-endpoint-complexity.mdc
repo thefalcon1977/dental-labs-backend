@@ -1,0 +1,168 @@
+---
+description: O(complexity) documentation and performance targets for API endpoints
+alwaysApply: true
+---
+
+# API Endpoint Complexity - Big O and Performance Documentation
+
+## Purpose
+
+- Ensure API endpoints are designed to be **as fast as possible** and their cost is explicit.
+- Document **time and space complexity (Big O)** for each endpoint so clients and maintainers understand scaling behavior.
+- Complement `fastapi-performance.mdc`, `performance-guardrails.mdc`, and `openapi-swagger.mdc`.
+
+## Scope and Relationship
+
+- Applies to all API route handlers (routers).
+- Complexity docs are part of the endpoint contract; update them when the implementation changes.
+- For latency/timeout defaults, see `performance-guardrails.mdc`.
+
+---
+
+## What Every Developer Must Do
+
+### 1. Document Complexity on Every Endpoint
+
+Each endpoint **must** document:
+
+- **Time complexity**: Big O in terms of the main variables (e.g. `n` = number of items, `page_size`, `id` lookup).
+- **Space complexity** (if non-trivial): e.g. O(page_size) for list responses.
+
+**Where to document**: In the route **description** (and optionally in a docstring). Use a consistent, short line so it’s visible in OpenAPI/Swagger.
+
+**Format** (include in `description`):
+
+- `Time: O(...) · Space: O(...)`
+
+If space is clearly O(1) or negligible, you can omit it. Example:
+
+```python
+@router.get(
+    "/items/{item_id}",
+    response_model=ItemResponse,
+    summary="Get item by ID",
+    description=(
+        "Return a single item by ID. "
+        "Time: O(1) · Space: O(1)"
+    ),
+)
+async def get_item(item_id: str) -> ItemResponse:
+    ...
+```
+
+List with pagination:
+
+```python
+@router.get(
+    "/items",
+    response_model=PaginatedResponse[ItemResponse],
+    summary="List items",
+    description=(
+        "Paginated list of items. "
+        "Time: O(page_size) · Space: O(page_size)"
+    ),
+)
+async def list_items(
+    pagination: PaginationParams = Depends(),
+) -> PaginatedResponse[ItemResponse]:
+    ...
+```
+
+Search/filter that scans an index:
+
+```python
+@router.get(
+    "/items/search",
+    summary="Search items",
+    description=(
+        "Search items by query; results are paginated. "
+        "Time: O(log n + page_size) for indexed search, n = total items. "
+        "Space: O(page_size)"
+    ),
+)
+async def search_items(...) -> ...:
+    ...
+```
+
+### 2. Target Complexity by Endpoint Type
+
+Design and implement so that complexity stays within these targets; document the **actual** complexity.
+
+| Endpoint type | Time target | Space target | Notes |
+|---------------|-------------|--------------|--------|
+| Get by ID (single resource) | O(1) | O(1) | Indexed primary/unique key lookup. |
+| List (paginated) | O(page_size) | O(page_size) | SQL-level pagination; no full scan. |
+| Search (indexed) | O(log n + page_size) or O(page_size) | O(page_size) | Prefer index use; avoid O(n) scan. |
+| Create (single) | O(1) | O(1) | Single insert. |
+| Update/Delete by ID | O(1) | O(1) | Single row by key. |
+| Bulk/batch (if allowed) | O(batch_size) | O(batch_size) | Cap batch_size; document it. |
+
+If an endpoint cannot meet the target (e.g. legacy or external constraint), **document the actual complexity and the reason** in the description.
+
+### 3. Keep Endpoints as Fast as Possible
+
+- **Prefer O(1) or O(log n)** for lookups; use indexes (see `fastapi-database.mdc`, `fastapi-performance.mdc`).
+- **Always paginate** list/search endpoints; no unbounded O(n) responses (see `performance-guardrails.mdc`).
+- **Avoid N+1**: eager load relationships so the path stays O(1) or O(page_size) (see `fastapi-performance.mdc`).
+- **No hidden O(n)** in serialization or post-processing: keep per-item work constant; total time O(page_size).
+- **External calls**: document if the dominant cost is external (e.g. “Time: dominated by external API, typically &lt; 2s”).
+
+### 4. Variables to Use in Big O
+
+Use clear, short variable names in the O() expression:
+
+- **n**: total number of entities (e.g. rows) in the scope of the operation.
+- **page_size**: number of items per page (max 100 per `performance-guardrails.mdc`).
+- **batch_size** or **k**: size of a batch or list input.
+
+Example: “Time: O(k) where k = number of requested IDs”.
+
+---
+
+## OpenAPI / Description Examples
+
+### Minimal (description only)
+
+```python
+description=(
+    "Get user by ID. Time: O(1) · Space: O(1)"
+)
+```
+
+### With behavior and complexity
+
+```python
+description=(
+    "Paginated list of orders for the current user. "
+    "Time: O(page_size) · Space: O(page_size). "
+    "Results ordered by created_at descending."
+)
+```
+
+### When complexity is worse than target
+
+```python
+description=(
+    "Legacy full-text search; no index. "
+    "Time: O(n), n = total documents; prefer /v2/search for large datasets. "
+    "Space: O(page_size)"
+)
+```
+
+---
+
+## Checklist (Before Merging)
+
+- [ ] Every endpoint has **time complexity** (and space if non-trivial) in its **description**.
+- [ ] Complexity matches the implementation (e.g. pagination → O(page_size), index lookup → O(1) or O(log n)).
+- [ ] List/search endpoints are paginated and documented as O(page_size) (or documented reason otherwise).
+- [ ] No unbounded O(n) responses; no hidden N+1 or O(n) post-processing unless documented and justified.
+
+---
+
+## References
+
+- `fastapi-performance.mdc` – query optimization, eager loading, pagination.
+- `performance-guardrails.mdc` – timeouts, page size limits, anti-patterns.
+- `openapi-swagger.mdc` – required fields (summary, description, responses).
+- `fastapi-database.mdc` – indexing, DAL/BLL, SQL-level pagination.

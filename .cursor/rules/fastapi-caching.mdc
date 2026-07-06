@@ -1,0 +1,1029 @@
+---
+alwaysApply: true
+---
+
+# FastAPI Caching - Best Practices and Patterns
+
+## Caching Overview
+
+### What is Caching?
+**Caching** is storing frequently accessed data in fast storage (memory, Redis) to reduce latency and database load. Cached data is retrieved faster than fetching from the original source.
+
+### Why Caching Matters
+- **Performance** - Reduces response time for frequently accessed data
+- **Database load** - Reduces database queries and load
+- **Scalability** - Improves application scalability
+- **Cost** - Reduces database costs by reducing queries
+- **User experience** - Faster responses improve user experience
+
+### Cache Types
+- **In-memory cache** - Fast, process-local (e.g., `functools.lru_cache`)
+- **Distributed cache** - Shared across processes (e.g., Redis)
+- **HTTP cache** - Browser/CDN caching via headers
+- **Application cache** - Application-level caching layer
+
+## When to Use Caching
+
+### ✅ DO Cache
+
+#### Frequently Accessed Data
+- ✅ **User profiles** - User data accessed frequently
+- ✅ **Configuration data** - Settings, feature flags
+- ✅ **Reference data** - Lookup tables, categories, enums
+- ✅ **Computed results** - Expensive calculations
+- ✅ **External API responses** - Third-party API data
+- ✅ **Aggregated data** - Statistics, counts, summaries
+
+#### Expensive Operations
+- ✅ **Database queries** - Complex queries with joins
+- ✅ **External API calls** - Slow external services
+- ✅ **File processing** - Large file reads/processing
+- ✅ **Data transformations** - Complex data transformations
+- ✅ **Template rendering** - Rendered templates
+
+#### Stable Data
+- ✅ **Read-heavy data** - Data that changes infrequently
+- ✅ **Static content** - Content that doesn't change often
+- ✅ **Public data** - Data that's the same for all users
+
+### ❌ DON'T Cache
+
+#### Frequently Changing Data
+- ❌ **Real-time data** - Stock prices, live scores
+- ❌ **User-specific dynamic data** - Shopping carts, sessions
+- ❌ **Transactional data** - Recent transactions, balances
+
+#### Sensitive Data
+- ❌ **Passwords** - Never cache passwords
+- ❌ **Authentication tokens** - Security-sensitive tokens
+- ❌ **Personal information** - Unless encrypted and secure
+
+#### Large Data
+- ❌ **Large files** - Don't cache entire large files in memory
+- ❌ **Unbounded data** - Data that can grow indefinitely
+
+## Cache Strategies
+
+### Cache-Aside (Lazy Loading)
+
+#### Pattern
+- Application checks cache first
+- If cache miss, fetch from database
+- Store result in cache for future requests
+- Most common pattern
+
+#### Implementation
+```python
+# apps/{app_name}/services/cache_service.py
+from typing import Any
+import json
+
+from apps.core.types import CacheKey, CachedData
+from config.settings import settings
+
+async def get_cached_user(
+    cache: Any,  # Redis client or cache interface
+    user_id: str,
+) -> CachedData | None:
+    """Get user from cache.
+
+    Args:
+        cache: Cache client (Redis or similar)
+        user_id: User identifier
+
+    Returns:
+        Cached user data or None if not found
+    """
+    cache_key = f"user:{user_id}"
+    cached = await cache.get(cache_key)
+
+    if cached:
+        return json.loads(cached) if isinstance(cached, str) else cached
+
+    return None
+
+
+async def get_user_with_cache(
+    cache: Any,
+    db: AsyncSession,
+    user_id: str,
+) -> schemas.UserResponse:
+    """Get user with cache-aside pattern.
+
+    Args:
+        cache: Cache client
+        db: Database session
+        user_id: User identifier
+
+    Returns:
+        User response schema
+    """
+    # Try cache first
+    cached = await get_cached_user(cache, user_id)
+    if cached:
+        return schemas.UserResponse.model_validate(cached)
+
+    # Cache miss - fetch from database
+    user = await dal.get_user_by_id(db, user_id)
+    if not user:
+        raise NotFoundError(resource="User", identifier=user_id)
+
+    # Store in cache
+    user_dict = user.__dict__
+    cache_key = f"user:{user_id}"
+    await cache.set(
+        cache_key,
+        json.dumps(user_dict, default=str),
+        ex=3600,  # TTL: 1 hour
+    )
+
+    return schemas.UserResponse.model_validate(user)
+```
+
+### Write-Through Cache
+
+#### Pattern
+- Write to cache and database simultaneously
+- Cache always has latest data
+- More consistent but slower writes
+
+#### Implementation
+```python
+async def create_user_with_cache(
+    cache: Any,
+    db: AsyncSession,
+    user_data: schemas.UserCreate,
+) -> schemas.UserResponse:
+    """Create user with write-through cache.
+
+    Args:
+        cache: Cache client
+        db: Database session
+        user_data: User creation data
+
+    Returns:
+        Created user response
+    """
+    # Create in database
+    user = await bll.create_user(db, user_data)
+
+    # Write to cache immediately
+    cache_key = f"user:{user.id}"
+    user_dict = user.__dict__
+    await cache.set(
+        cache_key,
+        json.dumps(user_dict, default=str),
+        ex=3600,
+    )
+
+    return schemas.UserResponse.model_validate(user)
+```
+
+### Write-Behind (Write-Back) Cache
+
+#### Pattern
+- Write to cache immediately
+- Write to database asynchronously
+- Fast writes but risk of data loss
+
+#### Implementation
+```python
+from fastapi import BackgroundTasks
+
+async def update_user_with_cache(
+    cache: Any,
+    db: AsyncSession,
+    background_tasks: BackgroundTasks,
+    user_id: str,
+    user_data: schemas.UserUpdate,
+) -> schemas.UserResponse:
+    """Update user with write-behind cache.
+
+    Args:
+        cache: Cache client
+        db: Database session
+        background_tasks: FastAPI background tasks
+        user_id: User identifier
+        user_data: User update data
+
+    Returns:
+        Updated user response
+    """
+    # Update cache immediately
+    cache_key = f"user:{user_id}"
+    updated_data = user_data.model_dump(exclude_unset=True)
+    await cache.set(
+        cache_key,
+        json.dumps(updated_data, default=str),
+        ex=3600,
+    )
+
+    # Update database in background
+    background_tasks.add_task(
+        bll.update_user,
+        db,
+        user_id,
+        user_data,
+    )
+
+    # Return cached data (optimistic)
+    return schemas.UserResponse.model_validate(updated_data)
+```
+
+### Cache Invalidation
+
+#### Invalidation Strategies
+- **Time-based (TTL)** - Cache expires after time
+- **Event-based** - Invalidate on data changes
+- **Manual** - Explicit invalidation
+- **Version-based** - Invalidate by version number
+
+#### Pattern: Invalidate on Update
+```python
+async def update_user_invalidate_cache(
+    cache: Any,
+    db: AsyncSession,
+    user_id: str,
+    user_data: schemas.UserUpdate,
+) -> schemas.UserResponse:
+    """Update user and invalidate cache.
+
+    Args:
+        cache: Cache client
+        db: Database session
+        user_id: User identifier
+        user_data: User update data
+
+    Returns:
+        Updated user response
+    """
+    # Update in database
+    user = await bll.update_user(db, user_id, user_data)
+
+    # Invalidate cache
+    cache_key = f"user:{user_id}"
+    await cache.delete(cache_key)
+
+    # Optionally: Update cache with new data
+    user_dict = user.__dict__
+    await cache.set(
+        cache_key,
+        json.dumps(user_dict, default=str),
+        ex=3600,
+    )
+
+    return schemas.UserResponse.model_validate(user)
+```
+
+#### Pattern: Pattern-Based Invalidation
+```python
+async def invalidate_user_cache_pattern(
+    cache: Any,
+    user_id: str,
+) -> None:
+    """Invalidate all cache entries for a user.
+
+    Args:
+        cache: Cache client (Redis)
+        user_id: User identifier
+    """
+    # Invalidate specific key
+    await cache.delete(f"user:{user_id}")
+
+    # Invalidate related keys (if using Redis)
+    # await cache.delete(f"user:{user_id}:profile")
+    # await cache.delete(f"user:{user_id}:settings")
+
+    # Or use pattern matching (Redis)
+    # pattern = f"user:{user_id}:*"
+    # keys = await cache.keys(pattern)
+    # if keys:
+    #     await cache.delete(*keys)
+```
+
+## Cache Keys and Naming
+
+### Cache Key Conventions
+- **Format**: `{resource}:{identifier}:{optional_suffix}`
+- **Examples**:
+  - `user:123` - User by ID
+  - `user:123:profile` - User profile
+  - `order:456:items` - Order items
+  - `product:789:details` - Product details
+
+### Cache Key Best Practices
+- ✅ **Use consistent format** - Same pattern across app
+- ✅ **Include resource type** - `user:`, `order:`, `product:`
+- ✅ **Use identifiers** - IDs, slugs, unique keys
+- ✅ **Add suffixes for variants** - `:profile`, `:settings`, `:list`
+- ✅ **Keep keys short** - But descriptive
+- ✅ **Use colons as separators** - Standard convention
+
+### ❌ DON'T
+- ❌ **Don't use spaces** - Use colons or underscores
+- ❌ **Don't use special characters** - Stick to alphanumeric and colons
+- ❌ **Don't make keys too long** - Keep them concise
+- ❌ **Don't include sensitive data** - No passwords, tokens in keys
+
+## TTL and Expiration
+
+### TTL Strategies
+
+#### Fixed TTL
+- Same expiration time for all entries
+- Simple but may not be optimal
+- Example: All user data expires after 1 hour
+
+#### Variable TTL
+- Different TTL based on data type
+- More optimal but more complex
+- Example: User data: 1 hour, Configuration: 24 hours
+
+#### Sliding TTL
+- TTL resets on access
+- Keeps frequently accessed data longer
+- Example: User data expires 1 hour after last access
+
+### TTL Recommendations
+- **User data**: 15-60 minutes
+- **Configuration**: 1-24 hours
+- **Reference data**: 1-7 days
+- **Static content**: 1-30 days
+- **Computed results**: 5-60 minutes
+
+### Implementation
+```python
+from apps.core.types import TTLSeconds
+
+# TTL constants
+USER_CACHE_TTL: TTLSeconds = 3600  # 1 hour
+CONFIG_CACHE_TTL: TTLSeconds = 86400  # 24 hours
+REFERENCE_CACHE_TTL: TTLSeconds = 604800  # 7 days
+
+async def cache_user(
+    cache: Any,
+    user_id: str,
+    user_data: dict[str, Any],
+    ttl: TTLSeconds = USER_CACHE_TTL,
+) -> None:
+    """Cache user data with TTL.
+
+    Args:
+        cache: Cache client
+        user_id: User identifier
+        user_data: User data to cache
+        ttl: Time to live in seconds
+    """
+    cache_key = f"user:{user_id}"
+    await cache.set(
+        cache_key,
+        json.dumps(user_data, default=str),
+        ex=ttl,
+    )
+```
+
+## Cache Implementation Patterns
+
+### Pattern 1: Redis-Based Caching
+
+#### Redis Setup
+- Use Redis for distributed caching
+- Configure via `settings.redis`
+- Use async Redis client (e.g., `redis.asyncio`)
+
+#### Redis Service
+```python
+# apps/{app_name}/services/cache_service.py
+import json
+from typing import Any
+
+from redis.asyncio import Redis
+from config.settings import settings
+
+from apps.core.types import CacheKey, CachedData, TTLSeconds
+
+class CacheService:
+    """Redis-based cache service."""
+
+    def __init__(self) -> None:
+        """Initialize cache service."""
+        self._redis: Redis | None = None
+
+    async def initialize(self) -> None:
+        """Initialize Redis connection."""
+        if not settings.redis.ENABLED:
+            return
+
+        self._redis = Redis(
+            host=settings.redis.HOST,
+            port=settings.redis.PORT,
+            db=settings.redis.DB,
+            password=settings.redis.PASSWORD if settings.redis.PASSWORD else None,
+            ssl=settings.redis.SSL,
+            socket_timeout=settings.redis.SOCKET_TIMEOUT,
+            socket_connect_timeout=settings.redis.SOCKET_CONNECT_TIMEOUT,
+            retry_on_timeout=settings.redis.RETRY_ON_TIMEOUT,
+            max_connections=settings.redis.MAX_CONNECTIONS,
+            decode_responses=False,  # Return bytes for JSON
+        )
+
+    async def close(self) -> None:
+        """Close Redis connection."""
+        if self._redis:
+            await self._redis.close()
+
+    async def get(self, key: CacheKey) -> CachedData | None:
+        """Get value from cache.
+
+        Args:
+            key: Cache key
+
+        Returns:
+            Cached data or None if not found
+        """
+        if not self._redis:
+            return None
+
+        try:
+            data = await self._redis.get(key)
+            if data:
+                return json.loads(data)
+            return None
+        except Exception:
+            # Cache errors should not break application
+            return None
+
+    async def set(
+        self,
+        key: CacheKey,
+        value: CachedData,
+        ttl: TTLSeconds | None = None,
+    ) -> None:
+        """Set value in cache.
+
+        Args:
+            key: Cache key
+            value: Data to cache
+            ttl: Time to live in seconds (None = no expiration)
+        """
+        if not self._redis:
+            return
+
+        try:
+            data = json.dumps(value, default=str)
+            if ttl:
+                await self._redis.setex(key, ttl, data)
+            else:
+                await self._redis.set(key, data)
+        except Exception:
+            # Cache errors should not break application
+            pass
+
+    async def delete(self, key: CacheKey) -> None:
+        """Delete value from cache.
+
+        Args:
+            key: Cache key
+        """
+        if not self._redis:
+            return
+
+        try:
+            await self._redis.delete(key)
+        except Exception:
+            # Cache errors should not break application
+            pass
+
+    async def exists(self, key: CacheKey) -> bool:
+        """Check if key exists in cache.
+
+        Args:
+            key: Cache key
+
+        Returns:
+            True if key exists, False otherwise
+        """
+        if not self._redis:
+            return False
+
+        try:
+            return bool(await self._redis.exists(key))
+        except Exception:
+            return False
+```
+
+### Pattern 2: In-Memory Caching
+
+#### LRU Cache
+- Use `functools.lru_cache` for simple cases
+- Process-local, fast
+- Limited by memory
+
+#### Implementation
+```python
+from functools import lru_cache
+from typing import Any
+
+@lru_cache(maxsize=100)
+def get_configuration_value(key: str) -> Any:
+    """Get configuration value (cached).
+
+    Args:
+        key: Configuration key
+
+    Returns:
+        Configuration value
+    """
+    # Fetch from database or settings
+    return fetch_configuration(key)
+```
+
+### Pattern 3: HTTP Caching
+
+#### HTTP Cache Headers
+- Use `Cache-Control` header for browser/CDN caching
+- Use `ETag` for conditional requests
+- Use `Last-Modified` for time-based validation
+
+#### Implementation
+```python
+from fastapi.responses import ORJSONResponse
+from datetime import datetime, timedelta
+
+@router.get("/products/{product_id}")
+async def get_product(product_id: str) -> ORJSONResponse:
+    """Get product with HTTP caching."""
+    product = await services.get_product(product_id)
+    response = schemas.ProductResponse.model_validate(product)
+
+    # Set cache headers
+    response_obj = ORJSONResponse(content=response.model_dump())
+    response_obj.headers["Cache-Control"] = "public, max-age=3600"
+    response_obj.headers["ETag"] = f'"{product.updated_at.timestamp()}"'
+
+    return response_obj
+```
+
+## Cache Warming
+
+### What is Cache Warming?
+**Cache warming** is pre-populating cache with frequently accessed data before it's requested. This reduces cache misses and improves initial performance.
+
+### When to Warm Cache
+- **Application startup** - Pre-load critical data
+- **Scheduled jobs** - Periodic cache refresh
+- **After deployments** - Refresh cache after code updates
+- **After bulk updates** - Refresh affected cache entries
+
+### Implementation
+```python
+# apps/{app_name}/services/cache_warming.py
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from config.logging import get_logger
+from ..repository import dal
+
+logger = get_logger(__name__)
+
+async def warm_user_cache(
+    cache: Any,
+    db: AsyncSession,
+    user_ids: list[str] | None = None,
+) -> int:
+    """Warm cache with user data.
+
+    Args:
+        cache: Cache client
+        db: Database session
+        user_ids: Specific user IDs to warm (None = warm all active users)
+
+    Returns:
+        Number of users cached
+    """
+    if user_ids:
+        users = await dal.get_users_by_ids(db, user_ids)
+    else:
+        # Get active users (limit to prevent memory issues)
+        users, _ = await dal.list_users(db, pagination=PaginationParams(page=1, page_size=1000))
+
+    cached_count = 0
+    for user in users:
+        try:
+            cache_key = f"user:{user.id}"
+            user_dict = user.__dict__
+            await cache.set(
+                cache_key,
+                json.dumps(user_dict, default=str),
+                ex=3600,
+            )
+            cached_count += 1
+        except Exception as e:
+            logger.warning("Failed to cache user", user_id=user.id, error=str(e))
+
+    logger.info("Cache warmed", users_cached=cached_count, total_users=len(users))
+    return cached_count
+```
+
+## Cache Service Layer
+
+### Service Pattern
+- Create cache service in `services/cache_service.py`
+- Use dependency injection for cache client
+- Handle cache errors gracefully (don't break application)
+
+#### Example Service
+```python
+# apps/{app_name}/services/user_cache_service.py
+from typing import Any
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from apps.core.types import CacheKey, TTLSeconds
+from .. import schemas
+from ..repository import dal
+
+USER_CACHE_TTL: TTLSeconds = 3600  # 1 hour
+
+async def get_user_cached(
+    cache: Any,
+    db: AsyncSession,
+    user_id: str,
+) -> schemas.UserResponse:
+    """Get user with caching.
+
+    Args:
+        cache: Cache client
+        db: Database session
+        user_id: User identifier
+
+    Returns:
+        User response schema
+    """
+    cache_key: CacheKey = f"user:{user_id}"
+
+    # Try cache first
+    cached = await cache.get(cache_key)
+    if cached:
+        return schemas.UserResponse.model_validate(cached)
+
+    # Cache miss - fetch from database
+    user = await dal.get_user_by_id(db, user_id)
+    if not user:
+        raise NotFoundError(resource="User", identifier=user_id)
+
+    # Cache result
+    user_response = schemas.UserResponse.model_validate(user)
+    await cache.set(
+        cache_key,
+        user_response.model_dump(),
+        ttl=USER_CACHE_TTL,
+    )
+
+    return user_response
+
+
+async def invalidate_user_cache(
+    cache: Any,
+    user_id: str,
+) -> None:
+    """Invalidate user cache.
+
+    Args:
+        cache: Cache client
+        user_id: User identifier
+    """
+    cache_key: CacheKey = f"user:{user_id}"
+    await cache.delete(cache_key)
+```
+
+## Type Aliases for Caching
+
+### Cache Type Aliases
+```python
+# apps/{app_name}/types.py
+from typing import TypeAlias, Any
+
+# Cache-related type aliases
+CacheKey: TypeAlias = str
+CachedData: TypeAlias = dict[str, Any]
+TTLSeconds: TypeAlias = int
+CacheClient: TypeAlias = Any  # Redis client or cache interface
+
+__all__ = [
+    "CacheKey",
+    "CachedData",
+    "TTLSeconds",
+    "CacheClient",
+]
+```
+
+## Cache Error Handling
+
+### Graceful Degradation
+- **Cache errors should not break application** - Always handle cache failures gracefully
+- **Fallback to database** - If cache fails, fetch from database
+- **Log cache errors** - Monitor cache health
+
+#### Implementation
+```python
+from config.logging import get_logger
+
+logger = get_logger(__name__)
+
+async def get_user_with_cache_fallback(
+    cache: Any,
+    db: AsyncSession,
+    user_id: str,
+) -> schemas.UserResponse:
+    """Get user with cache, fallback to database on cache error.
+
+    Args:
+        cache: Cache client
+        db: Database session
+        user_id: User identifier
+
+    Returns:
+        User response schema
+    """
+    # Try cache first
+    try:
+        cached = await cache.get(f"user:{user_id}")
+        if cached:
+            return schemas.UserResponse.model_validate(cached)
+    except Exception as e:
+        # Cache error - log and continue to database
+        logger.warning(
+            "Cache error, falling back to database",
+            user_id=user_id,
+            error=str(e),
+        )
+
+    # Fallback to database
+    user = await dal.get_user_by_id(db, user_id)
+    if not user:
+        raise NotFoundError(resource="User", identifier=user_id)
+
+    # Try to cache (but don't fail if it doesn't work)
+    try:
+        user_response = schemas.UserResponse.model_validate(user)
+        await cache.set(
+            f"user:{user_id}",
+            user_response.model_dump(),
+            ttl=3600,
+        )
+    except Exception as e:
+        logger.warning("Failed to cache user", user_id=user_id, error=str(e))
+
+    return schemas.UserResponse.model_validate(user)
+```
+
+## Cache Monitoring
+
+### Cache Metrics
+- **Cache hit rate** - Percentage of cache hits
+- **Cache miss rate** - Percentage of cache misses
+- **Cache size** - Memory usage
+- **Cache evictions** - Number of evicted entries
+- **Cache errors** - Cache operation failures
+
+### Logging Cache Operations
+```python
+from config.logging import get_logger
+
+logger = get_logger(__name__)
+
+async def get_user_with_logging(
+    cache: Any,
+    db: AsyncSession,
+    user_id: str,
+) -> schemas.UserResponse:
+    """Get user with cache logging.
+
+    Args:
+        cache: Cache client
+        db: Database session
+        user_id: User identifier
+
+    Returns:
+        User response schema
+    """
+    cache_key = f"user:{user_id}"
+
+    # Try cache
+    cached = await cache.get(cache_key)
+    if cached:
+        logger.debug("Cache hit", cache_key=cache_key, user_id=user_id)
+        return schemas.UserResponse.model_validate(cached)
+
+    logger.debug("Cache miss", cache_key=cache_key, user_id=user_id)
+
+    # Fetch from database
+    user = await dal.get_user_by_id(db, user_id)
+    if not user:
+        raise NotFoundError(resource="User", identifier=user_id)
+
+    # Cache result
+    user_response = schemas.UserResponse.model_validate(user)
+    await cache.set(cache_key, user_response.model_dump(), ttl=3600)
+    logger.debug("Cached user", cache_key=cache_key, user_id=user_id)
+
+    return user_response
+```
+
+## Cache Best Practices
+
+### ✅ DO
+
+#### Cache Strategy
+- ✅ **Use cache-aside for reads** - Most common and flexible pattern
+- ✅ **Invalidate on updates** - Keep cache consistent with database
+- ✅ **Set appropriate TTL** - Balance freshness vs performance
+- ✅ **Use consistent key format** - `{resource}:{id}:{suffix}`
+- ✅ **Handle cache errors gracefully** - Don't break application
+- ✅ **Monitor cache performance** - Track hit rates and errors
+- ✅ **Warm cache on startup** - Pre-load critical data
+- ✅ **Use type aliases** - For cache-related types
+
+#### Cache Keys
+- ✅ **Use descriptive keys** - `user:123`, `order:456`
+- ✅ **Include resource type** - Makes keys searchable
+- ✅ **Use colons as separators** - Standard convention
+- ✅ **Keep keys short** - But descriptive
+
+#### Cache Data
+- ✅ **Cache serialized data** - JSON or pickled objects
+- ✅ **Cache computed results** - Expensive calculations
+- ✅ **Cache reference data** - Lookup tables, configurations
+- ✅ **Cache aggregated data** - Statistics, counts
+
+#### Performance
+- ✅ **Use Redis for distributed caching** - Shared across processes
+- ✅ **Use in-memory cache for simple cases** - `lru_cache` for local data
+- ✅ **Set reasonable TTL** - Balance freshness and performance
+- ✅ **Monitor cache size** - Prevent memory issues
+
+### ❌ DON'T
+
+#### Common Mistakes
+- ❌ **Don't cache sensitive data** - Passwords, tokens, PII (unless encrypted)
+- ❌ **Don't cache forever** - Always set TTL
+- ❌ **Don't ignore cache errors** - Handle gracefully but log them
+- ❌ **Don't cache large objects** - Be mindful of memory usage
+- ❌ **Don't cache frequently changing data** - Real-time data shouldn't be cached
+- ❌ **Don't skip invalidation** - Keep cache consistent
+
+#### Cache Keys
+- ❌ **Don't use spaces in keys** - Use colons or underscores
+- ❌ **Don't include sensitive data in keys** - No passwords, tokens
+- ❌ **Don't make keys too long** - Keep them concise
+- ❌ **Don't use inconsistent formats** - Stick to one pattern
+
+#### Cache Data
+- ❌ **Don't cache user-specific dynamic data** - Shopping carts, sessions
+- ❌ **Don't cache transactional data** - Recent transactions, balances
+- ❌ **Don't cache unbounded data** - Data that can grow indefinitely
+- ❌ **Don't cache without TTL** - Always set expiration
+
+## Integration with Existing Patterns
+
+### With Database Layer
+- Use DAL for cache misses (fetch from database)
+- Use BLL for cache invalidation (on updates)
+- Store cache operations in service layer
+
+### With Exception Handling
+- Handle cache errors gracefully
+- Don't raise exceptions for cache failures
+- Log cache errors for monitoring
+
+### With Logging
+- Log cache hits and misses (DEBUG level)
+- Log cache errors (WARNING level)
+- Log cache operations for monitoring
+
+### With Type Hints
+- Use type aliases for cache types
+- Type cache keys as `CacheKey`
+- Type cached data appropriately
+
+## Example: Complete Cached Endpoint
+
+```python
+"""Complete example of cached user endpoint."""
+
+from fastapi import APIRouter, Depends, Request, status
+from fastapi.responses import ORJSONResponse
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from apps.core.db import get_db
+from apps.core.exceptions import NotFoundError
+from config.logging import get_logger
+
+from .. import schemas, services
+from ..types import CacheClient
+
+router = APIRouter()
+logger = get_logger(__name__)
+
+# Cache dependency (would be injected from app state)
+async def get_cache(request: Request) -> CacheClient:
+    """Get cache client from app state."""
+    # TODO: Implement cache client injection
+    # return request.app.state.cache
+    pass
+
+@router.get(
+    "/users/{user_id}",
+    response_model=schemas.UserResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get user by ID",
+    description="Retrieve user by ID with caching support.",
+)
+async def get_user(
+    user_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    cache: CacheClient = Depends(get_cache),
+) -> schemas.UserResponse:
+    """Get user with caching.
+
+    Uses cache-aside pattern:
+    1. Check cache first
+    2. If cache miss, fetch from database
+    3. Store in cache for future requests
+
+    Args:
+        user_id: User identifier
+        request: FastAPI request object
+        db: Database session
+        cache: Cache client
+
+    Returns:
+        User response schema
+
+    Raises:
+        NotFoundError: If user not found
+    """
+    try:
+        # Try cache first
+        user = await services.get_user_cached(cache, db, user_id)
+        logger.debug("User retrieved", user_id=user_id, from_cache=True)
+        return user
+    except NotFoundError:
+        logger.warning("User not found", user_id=user_id)
+        raise
+    except Exception as e:
+        # Cache or other error - log and fallback
+        logger.warning(
+            "Error retrieving user, falling back to database",
+            user_id=user_id,
+            error=str(e),
+        )
+        # Fallback to direct database query
+        user = await services.get_user(db, user_id)
+        return user
+```
+
+## Cache Patterns Summary
+
+### Cache-Aside (Recommended)
+- ✅ Most flexible
+- ✅ Works with any cache
+- ✅ Easy to implement
+- ⚠️ Cache miss adds latency
+
+### Write-Through
+- ✅ Cache always consistent
+- ✅ Simple invalidation
+- ⚠️ Slower writes
+- ⚠️ More cache writes
+
+### Write-Behind
+- ✅ Fast writes
+- ✅ Reduced database load
+- ⚠️ Risk of data loss
+- ⚠️ More complex
+
+## Best Practices Summary
+
+### ✅ DO
+- ✅ Use cache-aside pattern for reads
+- ✅ Invalidate cache on updates
+- ✅ Set appropriate TTL
+- ✅ Use consistent cache key format
+- ✅ Handle cache errors gracefully
+- ✅ Monitor cache performance
+- ✅ Use type aliases for cache types
+- ✅ Log cache operations
+- ✅ Warm cache on startup
+- ✅ Use Redis for distributed caching
+
+### ❌ DON'T
+- ❌ Don't cache sensitive data
+- ❌ Don't cache forever (set TTL)
+- ❌ Don't ignore cache errors
+- ❌ Don't cache frequently changing data
+- ❌ Don't skip invalidation
+- ❌ Don't use inconsistent key formats
+- ❌ Don't cache large objects
+- ❌ Don't cache without monitoring

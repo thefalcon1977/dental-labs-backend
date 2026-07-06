@@ -1,0 +1,456 @@
+---
+alwaysApply: true
+---
+
+# FastAPI Error Handling - Exception Patterns
+
+## Centralized Error Handling
+
+### Architecture Overview
+- **Centralized handlers** are registered in `apps.core.exceptions.register_exception_handlers()`
+- All exception handlers are registered once at application startup
+- Handlers automatically convert all exceptions to consistent `ORJSONResponse` format
+- No need to register handlers per app - centralized system handles everything
+
+### App Exception Hierarchy Pattern
+- **Each app must have its own exception hierarchy** in `apps/{app_name}/helpers/exceptions.py`
+- All app-specific exceptions **must inherit from `BaseAPIException`**
+- This ensures consistent error handling across all apps
+- Example structure:
+  ```python
+  # apps/users/helpers/exceptions.py
+  from apps.core.exceptions import BaseAPIException
+  from fastapi import status
+
+  class UserError(BaseAPIException):
+      """Base exception for user-related errors."""
+      pass
+
+  class UserNotFoundError(UserError):
+      """User not found exception."""
+      def __init__(self, user_id: str):
+          super().__init__(
+              message=f"User not found: {user_id}",
+              status_code=status.HTTP_404_NOT_FOUND,
+              details={"user_id": user_id},
+          )
+
+  class UserAlreadyExistsError(UserError):
+      """User already exists exception."""
+      def __init__(self, email: str):
+          super().__init__(
+              message=f"User with email {email} already exists",
+              status_code=status.HTTP_409_CONFLICT,
+              details={"email": email},
+          )
+
+  class UserValidationError(UserError):
+      """User validation exception."""
+      def __init__(self, message: str, details: dict[str, Any] | None = None):
+          super().__init__(
+              message=message,
+              status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+              details=details or {},
+          )
+  ```
+
+### Following Base Exception Pattern
+- All app exceptions must:
+  1. Inherit from `BaseAPIException` (directly or through app base exception)
+  2. Call `super().__init__()` with `message`, `status_code`, and optional `details`
+  3. Use appropriate HTTP status codes from `fastapi.status`
+  4. Include relevant context in `details` parameter
+- Example:
+  ```python
+  # ✅ CORRECT - Follows base pattern
+  class OrderNotFoundError(BaseAPIException):
+      def __init__(self, order_id: str):
+          super().__init__(
+              message=f"Order not found: {order_id}",
+              status_code=status.HTTP_404_NOT_FOUND,
+              details={"order_id": order_id},
+          )
+
+  # ❌ WRONG - Doesn't follow pattern
+  class OrderNotFoundError(Exception):
+      def __init__(self, order_id: str):
+          self.order_id = order_id
+          super().__init__(f"Order not found: {order_id}")
+  ```
+
+### Automatic Handler Registration
+- **No manual handler registration needed** for app-specific exceptions
+- The centralized `BaseAPIException` handler automatically catches all exceptions inheriting from it
+- All app exceptions are handled consistently without additional code
+- Example:
+  ```python
+  # In apps/core/exceptions.py - Already registered
+  app.add_exception_handler(BaseAPIException, base_api_exception_handler)
+
+  # Your app exception automatically works:
+  from apps.orders.helpers.exceptions import OrderNotFoundError
+
+  @router.get("/orders/{order_id}")
+  async def get_order(order_id: str):
+      order = await services.get_order(order_id)
+      if not order:
+          raise OrderNotFoundError(order_id)  # Automatically handled!
+  ```
+
+### Exception Organization
+- Create exception hierarchy per app domain
+- Use base exception class for app (e.g., `UserError`, `OrderError`)
+- Create specific exceptions for different error scenarios
+- Place in `apps/{app_name}/helpers/exceptions.py`
+- Example:
+  ```python
+  # apps/orders/helpers/exceptions.py
+  from apps.core.exceptions import BaseAPIException
+  from fastapi import status
+
+  # App base exception
+  class OrderError(BaseAPIException):
+      """Base exception for order-related errors."""
+      pass
+
+  # Specific exceptions
+  class OrderNotFoundError(OrderError):
+      """Order not found."""
+      pass
+
+  class OrderCancellationError(OrderError):
+      """Order cannot be cancelled."""
+      pass
+
+  class OrderPaymentError(OrderError):
+      """Order payment error."""
+      pass
+  ```
+
+## Exception Hierarchy
+
+### Base Exception
+- All custom exceptions inherit from `BaseAPIException`
+- Located in `apps.core.exceptions`
+- Example:
+  ```python
+  from apps.core.exceptions import BaseAPIException
+
+  class CustomError(BaseAPIException):
+      def __init__(self, message: str):
+          super().__init__(
+              message=message,
+              status_code=status.HTTP_400_BAD_REQUEST,
+          )
+  ```
+
+### Standard Exceptions
+- Use predefined exceptions from `apps.core.exceptions`:
+  - `NotFoundError` - 404 Not Found
+  - `ValidationError` - 422 Unprocessable Entity
+  - `UnauthorizedError` - 401 Unauthorized
+  - `ForbiddenError` - 403 Forbidden
+  - `ConflictError` - 409 Conflict
+- Example:
+  ```python
+  from apps.core.exceptions import NotFoundError, ConflictError
+
+  if not user:
+      raise NotFoundError(resource="User", identifier=user_id)
+
+  if user_exists:
+      raise ConflictError(
+          message="User already exists",
+          details={"email": email},
+      )
+  ```
+
+## Exception Usage
+
+### Raising Exceptions
+- Always raise exceptions, never return error responses
+- Exception handlers convert to HTTP responses
+- Example:
+  ```python
+  from apps.core.exceptions import NotFoundError
+
+  @router.get("/items/{item_id}")
+  async def get_item(item_id: str) -> ItemResponse:
+      item = await services.get_item(item_id)
+      if not item:
+          raise NotFoundError(resource="Item", identifier=item_id)
+      return ItemResponse.model_validate(item)
+  ```
+
+### Exception Details
+- Include relevant details in exceptions
+- Use `details` parameter for additional context
+- Example:
+  ```python
+  from apps.core.exceptions import ValidationError
+
+  if not valid_email(email):
+      raise ValidationError(
+          message="Invalid email format",
+          details={"email": email, "reason": "missing @ symbol"},
+      )
+  ```
+
+## Exception Handlers
+
+### Handler Registration
+- Exception handlers are registered in `apps.core.exceptions`
+- Handlers convert exceptions to `ORJSONResponse`
+- Example handler:
+  ```python
+  async def base_api_exception_handler(
+      request: Request,
+      exc: BaseAPIException,
+  ) -> ORJSONResponse:
+      return ORJSONResponse(
+          status_code=exc.status_code,
+          content={
+              "error": {
+                  "message": exc.message,
+                  "type": exc.__class__.__name__,
+                  "details": exc.details,
+              }
+          },
+      )
+  ```
+
+### Handler Order
+- Handlers registered in order of specificity
+- Most specific handlers first
+- General exception handler last
+- Example:
+  ```python
+  app.add_exception_handler(BaseAPIException, base_api_exception_handler)
+  app.add_exception_handler(PydanticValidationError, validation_error_handler)
+  app.add_exception_handler(SQLAlchemyError, sqlalchemy_error_handler)
+  app.add_exception_handler(Exception, general_exception_handler)
+  ```
+
+## Validation Errors
+
+### Pydantic Validation
+- Pydantic validation errors handled automatically
+- Custom handler formats validation errors
+- Example response:
+  ```json
+  {
+    "error": {
+      "message": "Validation error",
+      "type": "ValidationError",
+      "details": {
+        "errors": [
+          {
+            "field": "email",
+            "message": "Invalid email format",
+            "type": "value_error"
+          }
+        ]
+      }
+    }
+  }
+  ```
+
+### Custom Validation
+- Raise `ValidationError` for custom validation
+- Example:
+  ```python
+  from apps.core.exceptions import ValidationError
+
+  if age < 18:
+      raise ValidationError(
+          message="User must be at least 18 years old",
+          details={"age": age, "minimum": 18},
+      )
+  ```
+
+## Database Errors
+
+### SQLAlchemy Errors
+- SQLAlchemy errors handled automatically
+- Error messages hidden in production
+- Full error messages in debug mode
+- Example:
+  ```python
+  # Handler automatically catches SQLAlchemyError
+  # Returns 500 with appropriate message
+  ```
+
+### Handling Database Errors
+- Catch specific database errors when needed
+- Re-raise as appropriate API exceptions
+- Example:
+  ```python
+  from sqlalchemy.exc import IntegrityError
+  from apps.core.exceptions import ConflictError
+
+  try:
+      user = User(email=email)
+      db.add(user)
+      await db.commit()
+  except IntegrityError:
+      await db.rollback()
+      raise ConflictError(
+          message="User with this email already exists",
+          details={"email": email},
+      )
+  ```
+
+## Error Response Format
+
+### Standard Error Response
+- All errors return consistent format
+- Example:
+  ```json
+  {
+    "error": {
+      "message": "Resource not found",
+      "type": "NotFoundError",
+      "details": {
+        "resource": "User",
+        "identifier": "123"
+      }
+    }
+  }
+  ```
+
+### Error Response Structure
+- `message`: Human-readable error message
+- `type`: Exception class name
+- `details`: Additional error context
+- Example:
+  ```python
+  {
+      "error": {
+          "message": str,
+          "type": str,
+          "details": dict[str, Any],
+      }
+  }
+  ```
+
+## Logging Errors
+
+### Error Logging
+- Log errors with context
+- Use structured logging
+- Example:
+  ```python
+  from config.logging import get_logger
+
+  logger = get_logger(__name__)
+
+  try:
+      result = await process_data(data)
+  except Exception as e:
+      logger.error(
+          "Failed to process data",
+          error=str(e),
+          error_type=type(e).__name__,
+          data_id=data.id,
+      )
+      raise
+  ```
+
+### Exception Logging
+- Use `logger.exception()` for exceptions
+- Automatically includes traceback
+- Example:
+  ```python
+  try:
+      result = await risky_operation()
+  except Exception:
+      logger.exception("Risky operation failed", operation_id=op_id)
+      raise
+  ```
+
+## Custom Exception Handlers
+
+### App-Specific Exceptions
+- Create app-specific exceptions in `apps/{app_name}/helpers/exceptions.py`
+- **Must inherit from `BaseAPIException`** to be handled by centralized system
+- Follow the exception hierarchy pattern (see Centralized Error Handling section)
+- Example:
+  ```python
+  # apps/users/helpers/exceptions.py
+  from apps.core.exceptions import BaseAPIException
+  from fastapi import status
+
+  class UserError(BaseAPIException):
+      """Base exception for user-related errors."""
+      pass
+
+  class UserAlreadyExistsError(UserError):
+      def __init__(self, email: str):
+          super().__init__(
+              message=f"User with email {email} already exists",
+              status_code=status.HTTP_409_CONFLICT,
+              details={"email": email},
+          )
+  ```
+
+### Registering Custom Handlers
+- **Usually NOT necessary** - centralized handler works for all `BaseAPIException` subclasses
+- Only register custom handlers if you need app-specific error response formatting
+- Custom handlers should still return `ORJSONResponse` for consistency
+- Example (rare case):
+  ```python
+  from apps.users.helpers.exceptions import UserAlreadyExistsError
+
+  async def user_exists_handler(
+      request: Request,
+      exc: UserAlreadyExistsError,
+  ) -> ORJSONResponse:
+      # Custom formatting (only if needed)
+      return ORJSONResponse(
+          status_code=exc.status_code,
+          content={
+              "error": {
+                  "message": exc.message,
+                  "type": exc.__class__.__name__,
+                  "details": exc.details,
+                  "suggestion": "Try a different email address",
+              }
+          },
+      )
+
+  # Register in app factory (only if custom formatting needed)
+  app.add_exception_handler(UserAlreadyExistsError, user_exists_handler)
+  ```
+
+### When to Use Custom Handlers
+- **Don't use custom handlers** for standard error responses
+- **Use custom handlers only** if you need:
+  - App-specific error response format
+  - Additional error context or suggestions
+  - Special logging or metrics for specific exceptions
+- In 99% of cases, the centralized handler is sufficient
+
+## Best Practices
+
+### Do's
+- ✅ Always raise exceptions, don't return error responses
+- ✅ Use appropriate exception types
+- ✅ Include relevant details in exceptions
+- ✅ Log errors with context
+- ✅ Use standard exception classes when possible
+- ✅ Handle database errors appropriately
+- ✅ **Create app-specific exception hierarchy** in `apps/{app_name}/helpers/exceptions.py`
+- ✅ **Inherit all app exceptions from `BaseAPIException`**
+- ✅ **Use centralized error handling** - no manual handler registration needed
+- ✅ **Follow consistent exception naming** (e.g., `{App}Error`, `{App}{Action}Error`)
+
+### Don'ts
+- ❌ Don't return error responses directly
+- ❌ Don't expose internal error details in production
+- ❌ Don't catch and swallow exceptions without logging
+- ❌ Don't use generic Exception for specific errors
+- ❌ Don't forget to rollback transactions on errors
+- ❌ **Don't create exceptions that don't inherit from `BaseAPIException`**
+- ❌ **Don't register custom handlers unless absolutely necessary**
+- ❌ **Don't create exceptions outside the app's `helpers/exceptions.py`**
+- ❌ **Don't bypass centralized error handling system**

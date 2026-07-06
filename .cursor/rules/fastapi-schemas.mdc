@@ -1,0 +1,294 @@
+---
+alwaysApply: true
+---
+
+# FastAPI Schemas - Pydantic Patterns
+
+## Schema Organization
+
+### Schema Location
+- Place schemas in `apps/{app_name}/schemas/`
+- Use descriptive file names: `user.py`, `item.py`
+- Group related schemas in same file
+- Example structure:
+  ```
+  apps/users/schemas/
+  ├── __init__.py
+  ├── user.py
+  └── user_create.py
+  ```
+
+### Schema Naming
+- Use descriptive names with purpose:
+  - `UserCreate` - Request schema for creation
+  - `UserUpdate` - Request schema for updates
+  - `UserResponse` - Response schema
+  - `UserListResponse` - List response schema
+- Example:
+  ```python
+  class UserCreate(BaseModel):
+      """User creation schema."""
+      email: EmailStr
+      name: str
+
+  class UserResponse(BaseModel):
+      """User response schema."""
+      id: str
+      email: str
+      name: str
+  ```
+
+## Pydantic Model Definition
+
+### Base Model Pattern
+- Always inherit from `BaseModel`
+- Use Pydantic v2 syntax
+- Include docstrings
+- Example:
+  ```python
+  from pydantic import BaseModel, EmailStr
+
+  class UserCreate(BaseModel):
+      """User creation schema."""
+      email: EmailStr
+      name: str
+      age: int | None = None
+  ```
+
+### Model Configuration
+- Use `model_config = ConfigDict(...)` for Pydantic v2
+- Enable `from_attributes=True` for ORM models
+- Example:
+  ```python
+  from pydantic import BaseModel, ConfigDict
+
+  class UserResponse(BaseModel):
+      """User response schema."""
+      model_config = ConfigDict(from_attributes=True)
+
+      id: str
+      email: str
+      name: str
+  ```
+
+## Type Hints
+
+### Modern Type Hints
+- Use Python 3.12+ syntax:
+  - `str | None` instead of `Optional[str]`
+  - `dict[str, Any]` instead of `Dict[str, Any]`
+  - `list[Type]` instead of `List[Type]`
+- Example:
+  ```python
+  from typing import Any
+
+  class ItemResponse(BaseModel):
+      id: str
+      name: str
+      tags: list[str]
+      metadata: dict[str, Any] | None = None
+  ```
+
+### Field Types
+- Use appropriate Pydantic field types:
+  - `EmailStr` for emails
+  - `HttpUrl` for URLs
+  - `PositiveInt` for positive integers
+  - `constr` for constrained strings
+- Example:
+  ```python
+  from pydantic import EmailStr, HttpUrl, PositiveInt, constr
+
+  class UserCreate(BaseModel):
+      email: EmailStr
+      website: HttpUrl | None = None
+      age: PositiveInt
+      username: constr(min_length=3, max_length=20)
+  ```
+
+## Field Validation
+
+### Field Validators
+- Use `@field_validator` for custom validation
+- Use `@model_validator` for cross-field validation
+- Example:
+  ```python
+  from pydantic import BaseModel, field_validator, model_validator
+
+  class UserCreate(BaseModel):
+      email: str
+      password: str
+      confirm_password: str
+
+      @field_validator("email")
+      @classmethod
+      def validate_email(cls, v: str) -> str:
+          if "@" not in v:
+              raise ValueError("Invalid email format")
+          return v.lower()
+
+      @model_validator(mode="after")
+      def validate_passwords_match(self):
+          if self.password != self.confirm_password:
+              raise ValueError("Passwords do not match")
+          return self
+  ```
+
+### Field Constraints
+- Use Pydantic constraints for simple validations
+- Example:
+  ```python
+  from pydantic import BaseModel, Field
+
+  class ItemCreate(BaseModel):
+      name: str = Field(..., min_length=1, max_length=100)
+      price: float = Field(..., gt=0)
+      quantity: int = Field(..., ge=0)
+  ```
+
+## Request Schemas
+
+### Creation Schemas
+- Include only fields needed for creation
+- Exclude auto-generated fields (id, timestamps)
+- Example:
+  ```python
+  class ItemCreate(BaseModel):
+      """Item creation schema."""
+      name: str
+      description: str | None = None
+      price: float
+  ```
+
+### Update Schemas
+- Make all fields optional
+- Use `Partial` pattern or `Field(None)`
+- Example:
+  ```python
+  class ItemUpdate(BaseModel):
+      """Item update schema."""
+      name: str | None = None
+      description: str | None = None
+      price: float | None = None
+  ```
+
+## Response Schemas
+
+### Response Schema Pattern
+- Include all fields to be returned
+- Use `from_attributes=True` for ORM models
+- Example:
+  ```python
+  class ItemResponse(BaseModel):
+      """Item response schema."""
+      model_config = ConfigDict(from_attributes=True)
+
+      id: str
+      name: str
+      description: str | None
+      price: float
+      created_at: datetime
+  ```
+
+### Nested Response Schemas
+- Use nested models for related data
+- Example:
+  ```python
+  class UserResponse(BaseModel):
+      id: str
+      email: str
+      profile: UserProfileResponse | None = None
+
+  class UserProfileResponse(BaseModel):
+      first_name: str
+      last_name: str
+  ```
+
+## Schema Conversion
+
+### Model to Schema
+- Use `model_validate()` for conversion
+- Example:
+  ```python
+  from sqlalchemy.orm import Mapped
+
+  # In route handler
+  item = await services.get_item(item_id)
+  return ItemResponse.model_validate(item)
+  ```
+
+### List Conversion
+- Convert lists of models to schemas
+- Example:
+  ```python
+  items = await services.list_items()
+  return [ItemResponse.model_validate(item) for item in items]
+  ```
+
+## Schema Reuse
+
+### Base Schemas
+- Create base schemas for common fields
+- Inherit from base schemas
+- Example:
+  ```python
+  class BaseUserSchema(BaseModel):
+      email: EmailStr
+      name: str
+
+  class UserCreate(BaseUserSchema):
+      password: str
+
+  class UserResponse(BaseUserSchema):
+      id: str
+      created_at: datetime
+  ```
+
+### Schema Composition
+- Compose schemas from multiple sources
+- Example:
+  ```python
+  class ItemBase(BaseModel):
+      name: str
+      price: float
+
+  class ItemCreate(ItemBase):
+      category_id: str
+
+  class ItemResponse(ItemBase):
+      id: str
+      category: CategoryResponse
+  ```
+
+## Schema Export
+
+### Schema Module Exports
+- Export schemas from `__init__.py`
+- Example:
+  ```python
+  # apps/users/schemas/__init__.py
+  from .user import UserCreate, UserUpdate, UserResponse
+
+  __all__ = [
+      "UserCreate",
+      "UserUpdate",
+      "UserResponse",
+  ]
+  ```
+
+## Best Practices
+
+### Do's
+- ✅ Always use type hints
+- ✅ Include docstrings
+- ✅ Use appropriate field types
+- ✅ Validate input data
+- ✅ Use `from_attributes=True` for ORM models
+- ✅ Make update schemas optional
+
+### Don'ts
+- ❌ Don't expose internal fields in response schemas
+- ❌ Don't include passwords in response schemas
+- ❌ Don't use `Optional` (use `| None`)
+- ❌ Don't skip validation
+- ❌ Don't mix request and response schemas

@@ -1,0 +1,377 @@
+---
+alwaysApply: true
+---
+
+# OpenAPI / Swagger - API Documentation Best Practices
+
+## Purpose
+
+- Make APIs self-describing and client-friendly via OpenAPI (Swagger).
+- Document all success and error responses so consumers know exactly what to expect.
+- Keep documentation in sync with code; treat OpenAPI as part of the API contract.
+
+## Scope and Relationship
+
+- This rule complements `fastapi-routing.mdc` (endpoint structure) and `fastapi-error-handling.mdc` (exception → response).
+- Error response shape must match `error-catalog.mdc` and `BaseAPIException` (message, type, details).
+- For versioning and deprecation, follow `api-versioning.mdc`.
+
+---
+
+## What Every Developer Must Do
+
+### 1. Required on Every Endpoint
+
+- **summary** (required): Short, imperative phrase; one line. Example: `"Get item by ID"`, `"Create order"`.
+- **description** (required): Clear explanation of what the endpoint does, when to use it, and any important behavior (e.g. pagination, auth, idempotency).
+- **response_model**: Set for success response so OpenAPI shows the response schema.
+- **status_code**: Set the primary success status (e.g. `200`, `201`, `204`).
+
+### 2. Document All Relevant Response Codes
+
+- Document **every** HTTP status the endpoint can return, not only 200/201.
+- Use the `responses` parameter in the route decorator for non-default status codes (4xx, 5xx).
+- For 200/201/204, either rely on `response_model` and `status_code` or add an explicit entry in `responses` when you want a custom description or example.
+
+### 3. Error Response Shape in OpenAPI
+
+- All API errors use the same structure (see `error-catalog.mdc` and `fastapi-error-handling.mdc`).
+- In `responses`, error examples must match this shape:
+
+```json
+{
+  "error": {
+    "message": "Human-readable summary",
+    "type": "ExceptionClassName",
+    "details": { "key": "value" }
+  }
+}
+```
+
+- Do **not** include secrets or PII in `details` in examples or real responses.
+
+### 4. When to Add Examples
+
+- **Success (200/201)**: Add a `content.application/json.example` (or schema example) for non-trivial response bodies so clients see a realistic payload.
+- **Errors (4xx/5xx)**: Add an example per documented error type so clients see the exact `error.message`, `error.type`, and `error.details` shape.
+- **Request body**: For complex POST/PUT/PATCH, add a request body example in the schema or in the endpoint so Swagger UI shows a filled sample.
+
+### 5. Tags and Grouping
+
+- Assign **tags** at router or endpoint level so Swagger groups operations (e.g. `tags=["draft-bpmns"]`, `tags=["search"]`).
+- Use consistent tag names across the app; prefer kebab-case.
+
+### 6. Deprecation and Versioning
+
+- To deprecate an endpoint, set `deprecated=True` in the route decorator and mention the deprecation and migration path in `description`.
+- When adding a new API version, document it in the path or header and reference `api-versioning.mdc`.
+
+---
+
+## Response Types and How to Document Them
+
+### Success Responses
+
+| Status | When to use | In OpenAPI |
+|--------|----------------|------------|
+| 200 OK | GET success, PUT/PATCH success, successful POST that returns body | `status_code=status.HTTP_200_OK`, `response_model=...`. Optionally `responses={200: {"description": "...", "content": {"application/json": {"example": {...}}}}}`. |
+| 201 Created | POST that creates a resource | `status_code=status.HTTP_201_CREATED`, `response_model=...`. Document location or body in description; add example if helpful. |
+| 204 No Content | DELETE success, or POST/PUT that intentionally return no body | `status_code=status.HTTP_204_NO_CONTENT`. No `response_model`. In `responses`, `204: {"description": "Resource deleted"}` (or similar). |
+
+### Client Error Responses (4xx)
+
+Document each that the endpoint can raise. Use the standard error body shape.
+
+| Status | Typical cause | Example in `responses` |
+|--------|----------------|------------------------|
+| 400 Bad Request | Malformed or invalid input (non-Pydantic) | `400: {"description": "Invalid request", "content": {"application/json": {"example": {"error": {"message": "...", "type": "ValidationError", "details": {}}}}}}` |
+| 401 Unauthorized | Missing or invalid auth | `401: {"description": "Authentication required or invalid"}` (and optionally error example). |
+| 403 Forbidden | Valid auth but insufficient permissions | `403: {"description": "Insufficient permissions"}`. |
+| 404 Not Found | Resource does not exist | `404: {"description": "Resource not found", "content": {"application/json": {"example": {"error": {"message": "Order not found: 123", "type": "NotFoundError", "details": {"resource": "Order", "identifier": "123"}}}}}}`. |
+| 409 Conflict | Uniqueness or state conflict (e.g. idempotency key reused with different body) | `409: {"description": "Conflict (e.g. idempotency key already used with different request)", "content": {"application/json": {"example": {"error": {"message": "...", "type": "ConflictError", "details": {}}}}}}`. |
+| 422 Unprocessable Entity | Pydantic validation failure | Often auto-generated by FastAPI; you can add `422: {"description": "Validation error", "content": {"application/json": {"example": {"error": {"message": "Validation error", "type": "ValidationError", "details": {"errors": [...]}}}}}}` for consistency. |
+| 429 Too Many Requests | Rate limiting | `429: {"description": "Rate limit exceeded"}` (if applicable). |
+
+### Server Error Responses (5xx)
+
+| Status | When | In OpenAPI |
+|--------|------|------------|
+| 500 Internal Server Error | Unexpected server failure | `500: {"description": "Internal server error", "content": {"application/json": {"example": {"error": {"message": "An unexpected error occurred", "type": "InternalServerError", "details": {}}}}}}`. Do not expose internals in examples. |
+| 503 Service Unavailable | Dependency down or overloaded | `503: {"description": "Service temporarily unavailable"}` (and optional error example with same `error` shape). |
+
+---
+
+## Keeping Response Docs DRY (Avoiding Inline Mess)
+
+Inline `responses={...}` with full examples can clutter route decorators. Prefer one of these approaches so routes stay readable and the error contract lives in one place.
+
+### Option A: Reusable Response Dicts (shared module)
+
+Define common response entries once and reuse them across endpoints.
+
+- **Place**: e.g. `apps/common/openapi_responses.py` or `apps/core/openapi_responses.py`.
+- **Content**: Standard error content (matching `error.message`, `error.type`, `error.details`) and pre-built entries for 400, 401, 404, 409, 500 (and 403, 422, 429 if needed).
+- **Usage**: In the route, set `responses={201: {...}, 400: RESP_400, 401: RESP_401, 404: RESP_404, 409: RESP_409, 500: RESP_500}`. Override or extend only when an endpoint needs a custom description or example.
+
+Example shape for the shared module:
+
+```python
+# apps/common/openapi_responses.py (or apps/core/openapi_responses.py)
+
+# Standard error body shape for OpenAPI examples (matches BaseAPIException / error-catalog)
+ERROR_JSON_EXAMPLE = {
+    "content": {
+        "application/json": {
+            "example": {
+                "error": {
+                    "message": "Human-readable summary",
+                    "type": "ExceptionType",
+                    "details": {},
+                }
+            }
+        }
+    }
+}
+
+RESP_400 = {"description": "Invalid input", **ERROR_JSON_EXAMPLE}
+RESP_401 = {"description": "Authentication required"}
+RESP_403 = {"description": "Insufficient permissions"}
+RESP_404 = {"description": "Resource not found", **ERROR_JSON_EXAMPLE}
+RESP_409 = {"description": "Conflict", **ERROR_JSON_EXAMPLE}
+RESP_422 = {"description": "Validation error", **ERROR_JSON_EXAMPLE}
+RESP_500 = {"description": "Internal server error", **ERROR_JSON_EXAMPLE}
+```
+
+In the route:
+
+```python
+from apps.common.openapi_responses import RESP_400, RESP_401, RESP_404, RESP_409, RESP_500
+
+@router.post(
+    "/resources",
+    response_model=ResourceResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create resource",
+    description="Create a new resource. Requires authentication.",
+    responses={
+        201: {"description": "Resource created successfully"},
+        400: RESP_400,
+        401: RESP_401,
+        404: RESP_404,
+        409: RESP_409,
+        500: RESP_500,
+    },
+)
+async def create_resource(...): ...
+```
+
+### Option B: Pydantic Model for Error Response
+
+Define the error envelope once as a Pydantic model. Use it in `responses` so OpenAPI gets the schema (and optionally a default example) from the model instead of inline dicts.
+
+- **Place**: e.g. in `apps/core/schemas.py` or a shared `schemas/errors.py`.
+- **Content**: A model that matches the handler output, e.g. `class ErrorDetail(BaseModel): message: str; type: str; details: dict = {}` and `class ErrorResponse(BaseModel): error: ErrorDetail`. Attach a default example via `model_config` / `json_schema_extra` if you want Swagger to show one.
+- **Usage**: In the route, use `responses={404: {"model": ErrorResponse, "description": "Resource not found"}, 500: {"model": ErrorResponse, "description": "Internal server error"}}`. FastAPI will generate the response schema from the model; the example (if set on the model) appears in Swagger.
+
+Example:
+
+```python
+# apps/core/schemas.py or apps/common/schemas/errors.py
+from pydantic import BaseModel, ConfigDict, Field
+
+class ErrorDetail(BaseModel):
+    message: str
+    type: str
+    details: dict[str, object] = Field(default_factory=dict)
+
+class ErrorResponse(BaseModel):
+    error: ErrorDetail
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "error": {
+                    "message": "Resource not found",
+                    "type": "NotFoundError",
+                    "details": {"resource": "Resource", "identifier": "id"},
+                }
+            }
+        }
+    )
+```
+
+In the route:
+
+```python
+from apps.core.schemas import ErrorResponse
+
+responses={
+    404: {"model": ErrorResponse, "description": "Resource not found"},
+    409: {"model": ErrorResponse, "description": "Conflict"},
+    500: {"model": ErrorResponse, "description": "Internal server error"},
+}
+```
+
+### Option C: Minimal Docs (description only)
+
+When you do not need full examples in Swagger, document only status and description. Keep the decorator short; the contract still matches the exception handler.
+
+```python
+responses={
+    400: {"description": "Invalid input"},
+    401: {"description": "Authentication required"},
+    404: {"description": "Resource not found"},
+    409: {"description": "Conflict"},
+    500: {"description": "Internal server error"},
+}
+```
+
+### Recommendation
+
+- Use **Option A** when you want consistent error examples across many endpoints without changing Pydantic schemas.
+- Use **Option B** when you want a single source of truth for the error response schema (and optional example) and are fine referencing a shared model.
+- Use **Option C** when examples are not needed and you only need clear status descriptions.
+
+You can combine A and B: e.g. shared Pydantic `ErrorResponse` for schema + a small set of reusable dicts for endpoint-specific descriptions or examples.
+
+---
+
+## Endpoint Decorator Template
+
+Use this as a checklist when adding or updating an endpoint. For a DRY approach, use the section above (reusable dicts or Pydantic error model) so the decorator stays short; the template below shows the full inline shape for reference.
+
+```python
+@router.post(
+    "/resources",
+    response_model=ResourceResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create resource",
+    description=(
+        "Create a new resource. "
+        "Requires authentication. "
+        "Optional: mention idempotency, validation rules, or side effects."
+    ),
+    responses={
+        201: {
+            "description": "Resource created successfully",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "id": "res-123",
+                        "name": "Example",
+                        "created_at": "2024-01-15T10:00:00Z",
+                    }
+                }
+            },
+        },
+        400: {
+            "description": "Invalid input",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "error": {
+                            "message": "Invalid input",
+                            "type": "ValidationError",
+                            "details": {"field": "name", "reason": "required"},
+                        }
+                    }
+                }
+            },
+        },
+        401: {"description": "Authentication required"},
+        404: {
+            "description": "Parent resource not found",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "error": {
+                            "message": "Parent not found: parent-1",
+                            "type": "NotFoundError",
+                            "details": {"resource": "Parent", "identifier": "parent-1"},
+                        }
+                    }
+                }
+            },
+        },
+        409: {
+            "description": "Resource already exists or conflict",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "error": {
+                            "message": "Resource with this name already exists",
+                            "type": "ConflictError",
+                            "details": {"field": "name"},
+                        }
+                    }
+                }
+            },
+        },
+        500: {
+            "description": "Internal server error",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "error": {
+                            "message": "An unexpected error occurred",
+                            "type": "InternalServerError",
+                            "details": {},
+                        }
+                    }
+                }
+            },
+        },
+    },
+)
+async def create_resource(...):
+    ...
+```
+
+---
+
+## Description Best Practices
+
+- **summary**: Imperative, one line, no period. E.g. `"List draft BPMNs"`, `"Delete form template"`.
+- **description**:
+  - First sentence: what the endpoint does and main outcome.
+  - Next: auth requirement, idempotency, pagination, or special query behavior.
+  - Use markdown sparingly: **bold** for key terms, `code` for field names. Use `\n\n` for paragraphs if needed.
+- For complex or domain-specific endpoints (e.g. advance search), include a short bullet list of mappings or options (e.g. ticket_number → business key) so the doc stays the single source of truth.
+
+---
+
+## Request Body and Query Documentation
+
+- **Query parameters**: Use `Query(..., description="...")` so parameter purpose and constraints appear in OpenAPI.
+- **Path parameters**: Document in the route `description` or in a docstring if the path is complex.
+- **Request body**: Use Pydantic models; add `Field(description="...")` for important fields. For a representative sample, add a request body example in the route (e.g. `body={"name": "Example", "type": "default"}`) or on the schema.
+
+---
+
+## Operation ID and Consistency
+
+- FastAPI derives **operationId** from the function name. Use clear, consistent names (e.g. `get_draft`, `list_drafts`, `create_resource`, `delete_resource`) so generated clients have readable method names.
+- Keep naming consistent across similar endpoints (e.g. all “get by id” handlers named `get_<resource>`).
+
+---
+
+## Checklist Before Merging API Changes
+
+- [ ] Every endpoint has `summary` and `description`.
+- [ ] Primary success status has `status_code` and `response_model` (except 204).
+- [ ] All returned status codes (4xx, 5xx) are listed in `responses` with a short description.
+- [ ] Error examples use the standard `error.message`, `error.type`, `error.details` shape; no secrets or PII.
+- [ ] Prefer DRY response docs: use reusable response dicts (Option A) or a Pydantic error model (Option B) instead of large inline `responses` blocks where possible.
+- [ ] Tags are set so Swagger groups endpoints logically.
+- [ ] Non-trivial success responses have an example where it helps consumers.
+- [ ] Deprecated endpoints have `deprecated=True` and migration note in description.
+- [ ] Request query/body parameters that need explanation have `description` (Query/Field).
+
+---
+
+## Redo / Keeping Docs in Sync
+
+- When changing response shape or status codes, update the route decorator (`response_model`, `responses`, examples) in the same commit.
+- When adding a new exception type that is raised from an endpoint, add the corresponding status code and example to `responses`.
+- Treat OpenAPI as the contract: if the docs say 404 with a certain `details` shape, the exception handler must produce that shape (see `fastapi-error-handling.mdc`).
+- Run the app and open `/docs` (Swagger UI) to spot missing or wrong descriptions and examples.

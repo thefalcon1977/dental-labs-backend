@@ -1,0 +1,54 @@
+---
+alwaysApply: true
+---
+
+# Performance Guardrails
+
+## Goals
+- Prevent regressions in latency, throughput, and resource use.
+- Keep patterns consistent across services.
+
+## Timeouts and Limits (defaults)
+- HTTP client calls: set explicit timeout (never infinite). Typical: 2–5s.
+- DB health checks: 2s (see `apps.core.db`).
+- Slow request warning threshold: 1s (log WARNING; adjust per endpoint if needed).
+- Page size: default 20, max 100 (see pagination utils).
+- Request size limit: configured in middleware; keep small unless justified.
+
+## Database Guardrails
+- Use SQL-level pagination for lists.
+- Avoid N+1: eager load relationships where needed.
+- Avoid selecting `*`—select only needed columns.
+- Index frequently queried columns and FKs.
+- Keep transactions short; avoid long-held locks.
+
+## Caching Considerations
+- Cache only when approved (see global rule: ask before adding cache/idempotency).
+- Invalidate on writes; set TTLs; avoid caching sensitive or high-churn data.
+
+## Concurrency and Async
+- Use async for all I/O; avoid blocking calls in async contexts.
+- Use `asyncio.gather` for independent concurrent tasks, but bound fan-out.
+- Set worker counts and DB pool sizes deliberately (no unbounded defaults).
+
+## Logging and Metrics for Performance
+- Log slow requests (> threshold) with route and duration (no PII).
+- Emit request duration metrics (histograms) with low-cardinality labels.
+- Track DB query durations and pool saturation if available.
+
+## Payloads and Serialization
+- Use `ORJSONResponse` for JSON.
+- Avoid large payloads; paginate/stream if needed.
+- Validate and constrain upload/download sizes.
+
+## Testing and Regression Prevention
+- Add perf-sensitive tests or benchmarks for hot paths when feasible.
+- Guardrail checks in CI (lint for pagination, max page size, and timeouts where practical).
+- Document endpoint-specific thresholds if they differ from defaults.
+
+## Common Anti-Patterns to Avoid
+- Blocking I/O in async routes/services.
+- Missing pagination on list endpoints.
+- Large unbounded queries or responses.
+- Excessive logging in hot paths.
+- Unbounded concurrency/fan-out.

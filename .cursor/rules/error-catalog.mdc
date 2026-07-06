@@ -1,0 +1,44 @@
+---
+alwaysApply: true
+---
+
+# Error Catalog - Consistency and Coverage
+
+## Purpose
+- Standardize error shapes and types across apps.
+- Make errors predictable for clients and observable for ops.
+
+## Base Pattern
+- All app-specific errors inherit from `apps.core.exceptions.BaseAPIException`.
+- Each app defines its own hierarchy in `apps/{app_name}/helpers/exceptions.py`.
+- Never raise raw `Exception` for domain errors—use typed exceptions.
+
+## Structure of Errors
+- HTTP status code appropriate to the condition (4xx client, 5xx server).
+- Fields:
+  - `message`: human-readable summary
+  - `type`: exception class name
+  - `details`: dict with structured context (IDs, constraints, limits)
+- Do **not** include secrets or PII in `details`.
+
+## Common Error Types (suggested)
+- `ValidationError` (422) – input/contract violations
+- `NotFoundError` (404) – missing resource
+- `ConflictError` (409) – uniqueness/state conflicts (incl. idempotency conflicts)
+- `UnauthorizedError` (401) – auth missing/invalid
+- `ForbiddenError` (403) – insufficient permissions
+- `RateLimitError` (429) – too many requests (usually middleware)
+- `ServiceUnavailableError` (503) – dependencies unavailable
+
+## Domain-Specific Errors
+- Add per-domain subclasses (e.g., `OrderNotFoundError`, `PaymentFailedError`).
+- Keep names specific and consistent; reuse core base classes.
+- Include stable identifiers in `details` (e.g., `order_id`, `user_id`).
+
+## Contract and Versioning
+- Changing error types/status codes is a breaking change—version or deprecate.
+- Add new error types additively; do not repurpose existing ones.
+
+## Observability
+- Log errors with context (no secrets/PII).
+- Metrics: track error counts by type/status (low-cardinality labels).
