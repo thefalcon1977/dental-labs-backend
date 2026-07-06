@@ -15,6 +15,7 @@ from .associations import user_groups_table, user_roles_table
 
 if TYPE_CHECKING:
     from .group import Group
+    from .profile import Profile
     from .role import Role
 
 GroupList: TypeAlias = list["Group"]
@@ -48,8 +49,6 @@ class UserBase(Base):
         String(255),
         nullable=False,
     )
-    first_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
-    last_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
     is_verified: Mapped[bool] = mapped_column(default=False, nullable=False)
     is_superuser: Mapped[bool] = mapped_column(default=False, nullable=False)
@@ -79,6 +78,12 @@ class User(UserBase):
         "Role",
         secondary=user_roles_table,
         back_populates="users",
+    )
+    profile: Mapped["Profile | None"] = relationship(
+        "Profile",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        uselist=False,
     )
 
 
