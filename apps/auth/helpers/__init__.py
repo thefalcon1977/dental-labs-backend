@@ -10,6 +10,8 @@ from .exceptions import (
     InvalidTokenError,
     TokenExpiredError,
     TokenRevokedError,
+    UserAlreadyExistsError,
+    UserNotFoundError,
 )
 
 __all__ = [
@@ -22,4 +24,6 @@ __all__ = [
     "InvalidTokenError",
     "TokenExpiredError",
     "TokenRevokedError",
+    "UserAlreadyExistsError",
+    "UserNotFoundError",
 ]

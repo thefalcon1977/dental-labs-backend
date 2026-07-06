@@ -94,6 +94,45 @@ class InactiveUserError(AuthError):
         )
 
 
+class UserAlreadyExistsError(AuthError):
+    """User already exists exception."""
+
+    def __init__(
+        self,
+        field: str,
+        value: str,
+        message: str = "User already exists",
+    ) -> None:
+        """Initialize user already exists error.
+
+        Args:
+            field: Field that caused the conflict.
+            value: Conflicting field value.
+            message: Public error message.
+        """
+        super().__init__(
+            message=message,
+            status_code=status.HTTP_409_CONFLICT,
+            details={field: value},
+        )
+
+
+class UserNotFoundError(AuthError):
+    """User not found exception."""
+
+    def __init__(self, user_id: str) -> None:
+        """Initialize user not found error.
+
+        Args:
+            user_id: User identifier.
+        """
+        super().__init__(
+            message="User not found",
+            status_code=status.HTTP_404_NOT_FOUND,
+            details={"user_id": user_id},
+        )
+
+
 class InsufficientPermissionsError(AuthError):
     """User lacks required permissions exception."""
 
@@ -125,4 +164,6 @@ __all__ = [
     "InvalidTokenError",
     "TokenExpiredError",
     "TokenRevokedError",
+    "UserAlreadyExistsError",
+    "UserNotFoundError",
 ]
