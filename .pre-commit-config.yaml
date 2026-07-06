@@ -41,6 +41,7 @@ repos:
     hooks:
       - id: mypy
         args: [--ignore-missing-imports, --no-strict-optional, --explicit-package-bases]
+        additional_dependencies: [types-redis]
         exclude: ^(tests/|migrations/)
 
   # Commit message linting with commitizen

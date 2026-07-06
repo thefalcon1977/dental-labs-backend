@@ -1,0 +1,592 @@
+---
+alwaysApply: true
+---
+
+# Prometheus Metrics Standards and Best Practices
+
+## Metrics Purpose and Scope
+
+### Metrics Are for Maintenance Only
+- **Purpose**: System health, performance monitoring, and operational maintenance
+- **Use for**: Alerting, dashboards, troubleshooting, capacity planning
+- **Do NOT use for**: Marketing, business analytics, user tracking, revenue metrics
+- **Focus**: Technical metrics that help operations and development teams
+
+### Production-Ready Metrics
+- All metrics must be **actionable** for operations team
+- All metrics must be **usable on monitoring dashboards** (Grafana, Prometheus, etc.)
+- Metrics should help identify and resolve issues quickly
+- Metrics should support alerting rules
+
+## Metric Types and When to Use Them
+
+### Counter
+- **Use for**: Cumulative values that only increase
+- **Examples**: Total requests, total errors, total operations
+- **Naming**: End with `_total` or `_count`
+- **Example**:
+  ```python
+  from prometheus_client import Counter
+
+  api_requests_total = Counter(
+      "api_requests_total",
+      "Total number of API requests",
+      ["method", "endpoint", "status_code"],
+  )
+  ```
+
+### Gauge
+- **Use for**: Values that can go up or down
+- **Examples**: Active connections, queue size, current memory usage
+- **Naming**: Use descriptive names without suffix
+- **Example**:
+  ```python
+  from prometheus_client import Gauge
+
+  active_connections = Gauge(
+      "active_connections",
+      "Number of active connections",
+  )
+  ```
+
+### Histogram
+- **Use for**: Distributions of measurements (durations, sizes)
+- **Examples**: Request duration, response size, processing time
+- **Naming**: End with unit (e.g., `_seconds`, `_bytes`)
+- **Buckets**: Must be carefully chosen for meaningful percentiles
+- **Example**:
+  ```python
+  from prometheus_client import Histogram
+
+  request_duration_seconds = Histogram(
+      "request_duration_seconds",
+      "Request duration in seconds",
+      ["method", "endpoint"],
+      buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
+  )
+  ```
+
+### Summary
+- **Use for**: Similar to Histogram but with pre-calculated quantiles
+- **When**: When you need client-side quantile calculation
+- **Note**: Prefer Histogram for most use cases
+
+### Info
+- **Use for**: Static information about the service
+- **Examples**: Service version, build info, configuration
+- **Example**:
+  ```python
+  from prometheus_client import Info
+
+  service_info = Info(
+      "service_info",
+      "Service information",
+  )
+  ```
+
+## Metric Naming Standards
+
+### Naming Convention
+- Use **snake_case** for metric names
+- Use **lowercase** only
+- Be **descriptive** and **concise**
+- Follow Prometheus naming best practices
+- **Format**: `{prefix}_{name}_{unit}` or `{prefix}_{name}_total`
+
+### Prefix Standards
+- **Core metrics**: No prefix (e.g., `http_requests_total`)
+- **App-specific metrics**: Use app name prefix (e.g., `users_registrations_total`)
+- **System metrics**: Use `system_` prefix (e.g., `system_cpu_usage_percent`)
+- **Database metrics**: Use `db_` prefix (e.g., `db_queries_total`)
+- **HTTP metrics**: Use `http_` prefix (e.g., `http_request_duration_seconds`)
+
+### Label Standards
+- **Keep labels minimal** - Too many labels cause high cardinality
+- **Use consistent label names** across metrics
+- **Common labels**: `method`, `endpoint`, `status_code`, `operation`, `error_type`
+- **Avoid**: User IDs, email addresses, dynamic values that create high cardinality
+
+### Good vs Bad Naming
+
+#### ✅ Good Metric Names
+```python
+# Clear, descriptive, follows conventions
+http_requests_total
+http_request_duration_seconds
+db_connections_active
+users_registrations_total
+orders_processing_duration_seconds
+```
+
+#### ❌ Bad Metric Names
+```python
+# Too vague
+requests
+duration
+connections
+
+# Wrong naming convention
+HTTP_Requests
+requestDuration
+dbConnections
+
+# Not descriptive
+metric1
+counter
+gauge
+```
+
+## App-Specific Metrics Standards
+
+### Where to Place App Metrics
+- Create `apps/{app_name}/metrics/` directory
+- Place metrics in `apps/{app_name}/metrics/__init__.py`
+- Export metrics from app's `__init__.py` if needed
+- Example structure:
+  ```
+  apps/users/metrics/
+  ├── __init__.py
+  └── user_metrics.py  # Optional: if metrics are complex
+  ```
+
+### App Metrics Requirements
+- **Must be maintenance-focused** - Help operations monitor app health
+- **Must be actionable** - Can be used for alerting
+- **Must be dashboard-ready** - Useful in Grafana/Prometheus dashboards
+- **Must follow naming standards** - Use app prefix
+
+### Example App Metrics
+```python
+# apps/users/metrics/__init__.py
+"""User service Prometheus metrics."""
+
+from prometheus_client import Counter, Histogram, Gauge
+
+# User operations metrics
+users_registrations_total = Counter(
+    "users_registrations_total",
+    "Total number of user registrations",
+    ["status"],  # success, failed
+)
+
+users_authentication_attempts_total = Counter(
+    "users_authentication_attempts_total",
+    "Total number of authentication attempts",
+    ["status", "method"],  # success, failed | password, token
+)
+
+users_authentication_duration_seconds = Histogram(
+    "users_authentication_duration_seconds",
+    "User authentication duration in seconds",
+    ["method"],
+    buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
+)
+
+active_sessions = Gauge(
+    "active_sessions",
+    "Number of active user sessions",
+)
+
+__all__ = [
+    "users_registrations_total",
+    "users_authentication_attempts_total",
+    "users_authentication_duration_seconds",
+    "active_sessions",
+]
+```
+
+## Preventing Useless Metrics
+
+### ❌ Don't Create These Metrics
+
+#### Business/Marketing Metrics
+```python
+# ❌ BAD - Business metric, not maintenance
+revenue_total = Counter("revenue_total", "Total revenue")
+orders_value_total = Counter("orders_value_total", "Total order value")
+user_acquisition_total = Counter("user_acquisition_total", "Total user acquisitions")
+```
+
+#### User Tracking Metrics
+```python
+# ❌ BAD - User tracking, not maintenance
+user_activity_total = Counter("user_activity_total", "User activity", ["user_id"])
+user_location_total = Counter("user_location_total", "User locations", ["country", "city"])
+```
+
+#### High Cardinality Metrics
+```python
+# ❌ BAD - Too many unique label combinations
+api_requests_total = Counter(
+    "api_requests_total",
+    "Requests",
+    ["user_id", "session_id", "ip_address", "user_agent"],  # Too many labels!
+)
+```
+
+#### Redundant Metrics
+```python
+# ❌ BAD - Redundant with http_requests_total
+my_app_http_requests_total = Counter("my_app_http_requests_total", "HTTP requests")
+# Use core http_requests_total instead
+```
+
+#### Non-Actionable Metrics
+```python
+# ❌ BAD - Not actionable for operations
+random_value = Gauge("random_value", "Random value")
+meaningless_counter = Counter("meaningless_counter", "Counts something")
+```
+
+### ✅ Do Create These Metrics
+
+#### System Health Metrics
+```python
+# ✅ GOOD - System health monitoring
+service_health_status = Gauge(
+    "service_health_status",
+    "Service health status (1=healthy, 0=unhealthy)",
+)
+
+dependency_health_status = Gauge(
+    "dependency_health_status",
+    "Dependency health status",
+    ["dependency"],  # database, redis, external_api
+)
+```
+
+#### Performance Metrics
+```python
+# ✅ GOOD - Performance monitoring
+cache_hit_rate = Gauge(
+    "cache_hit_rate",
+    "Cache hit rate (0-1)",
+)
+
+queue_size = Gauge(
+    "queue_size",
+    "Current queue size",
+    ["queue_name"],
+)
+```
+
+#### Error Metrics
+```python
+# ✅ GOOD - Error tracking for operations
+processing_errors_total = Counter(
+    "processing_errors_total",
+    "Total processing errors",
+    ["error_type", "operation"],
+)
+```
+
+## Metric Cardinality Rules
+
+### High Cardinality Problem
+- **High cardinality** = Too many unique label combinations
+- Causes: Memory issues, slow queries, storage problems
+- **Rule**: Keep cardinality under 1000 unique series per metric
+
+### Label Guidelines
+- ✅ **Use static or low-cardinality labels**: `method`, `status_code`, `endpoint`
+- ❌ **Avoid high-cardinality labels**: `user_id`, `session_id`, `ip_address`, `request_id`
+- ✅ **Limit labels to 3-5 per metric**
+- ✅ **Use consistent label values** across metrics
+
+### Example: Good vs Bad Cardinality
+
+#### ✅ Good - Low Cardinality
+```python
+# ~20 unique series (5 methods × 4 status codes)
+http_requests_total = Counter(
+    "http_requests_total",
+    "HTTP requests",
+    ["method", "status_code"],  # GET, POST, PUT, DELETE, PATCH × 200, 400, 500, 503
+)
+```
+
+#### ❌ Bad - High Cardinality
+```python
+# Millions of unique series (one per user)
+http_requests_total = Counter(
+    "http_requests_total",
+    "HTTP requests",
+    ["method", "status_code", "user_id"],  # user_id creates high cardinality!
+)
+```
+
+## Bucket Configuration for Histograms
+
+### HTTP Request Duration Buckets
+- Use buckets appropriate for HTTP requests
+- Standard buckets: `(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0)`
+- Example:
+  ```python
+  http_request_duration_seconds = Histogram(
+      "http_request_duration_seconds",
+      "HTTP request duration",
+      buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
+  )
+  ```
+
+### Database Query Duration Buckets
+- Use smaller buckets for database operations
+- Standard buckets: `(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0)`
+- Example:
+  ```python
+  db_query_duration_seconds = Histogram(
+      "db_query_duration_seconds",
+      "Database query duration",
+      buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
+  )
+  ```
+
+### Size Buckets (Bytes)
+- Use exponential buckets for sizes
+- Standard buckets: `(100, 500, 1000, 2500, 5000, 10000, 25000, 50000, 100000)`
+- Example:
+  ```python
+  response_size_bytes = Histogram(
+      "response_size_bytes",
+      "Response size in bytes",
+      buckets=(100, 500, 1000, 2500, 5000, 10000, 25000, 50000, 100000),
+  )
+  ```
+
+## Dashboard-Ready Metrics
+
+### Metrics Must Support Common Queries
+
+#### Request Rate
+```promql
+# Must support: rate(http_requests_total[5m])
+rate(http_requests_total[5m])
+```
+
+#### Error Rate
+```promql
+# Must support: rate(http_errors_total[5m])
+rate(http_errors_total[5m])
+```
+
+#### Percentiles (P50, P95, P99)
+```promql
+# Must support: histogram_quantile(0.95, ...)
+histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))
+```
+
+#### Success Rate
+```promql
+# Must support: success rate calculation
+sum(rate(http_requests_total{status_code=~"2.."}[5m])) / sum(rate(http_requests_total[5m]))
+```
+
+### Required Metrics for Dashboards
+
+#### Service Health Dashboard
+- ✅ Service uptime/availability
+- ✅ Request rate (requests/second)
+- ✅ Error rate (errors/second)
+- ✅ Response time (P50, P95, P99)
+- ✅ Active requests
+
+#### Database Dashboard
+- ✅ Connection pool usage
+- ✅ Query rate
+- ✅ Query duration (P50, P95, P99)
+- ✅ Error rate
+- ✅ Slow queries
+
+#### System Resources Dashboard
+- ✅ CPU usage
+- ✅ Memory usage
+- ✅ Disk I/O
+- ✅ Network I/O
+
+## Metric Documentation
+
+### Required Documentation
+- **Description**: Clear, concise description of what the metric measures
+- **Labels**: Document all label names and their possible values
+- **Unit**: Specify unit in metric name or description
+- **Use case**: How operations team should use this metric
+
+### Example Documentation
+```python
+"""User service Prometheus metrics.
+
+Metrics:
+    users_registrations_total: Total number of user registrations
+        Labels:
+            status: Registration status (success, failed, validation_error)
+        Use case: Monitor registration success rate and failures
+
+    users_authentication_duration_seconds: Authentication duration
+        Labels:
+            method: Authentication method (password, token, oauth)
+        Use case: Monitor authentication performance, alert if P95 > 1s
+        Buckets: Optimized for 0.01s to 5s range
+"""
+
+from prometheus_client import Counter, Histogram
+
+users_registrations_total = Counter(
+    "users_registrations_total",
+    "Total number of user registrations",
+    ["status"],
+)
+
+users_authentication_duration_seconds = Histogram(
+    "users_authentication_duration_seconds",
+    "User authentication duration in seconds",
+    ["method"],
+    buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
+)
+```
+
+## Metric Registration
+
+### Registering App Metrics
+- Export metrics from app's metrics module
+- Import in app's `__init__.py` if needed
+- Metrics are automatically collected by Prometheus
+- Example:
+  ```python
+  # apps/users/metrics/__init__.py
+  from prometheus_client import Counter
+
+  users_registrations_total = Counter(...)
+
+  __all__ = ["users_registrations_total"]
+
+  # Metrics are automatically registered when imported
+  ```
+
+### Avoiding Duplicate Metrics
+- **Never** create duplicate metric names
+- Check existing metrics before creating new ones
+- Use core metrics when available (e.g., `http_requests_total`)
+- Coordinate with other apps to avoid conflicts
+
+## Testing Metrics
+
+### Metric Testing Requirements
+- Test that metrics are collected correctly
+- Test label values are correct
+- Test metric increments/updates work
+- Test bucket distributions for histograms
+- Example:
+  ```python
+  def test_user_registration_metric():
+      # Test metric increments
+      initial = users_registrations_total.labels(status="success")._value.get()
+      register_user()
+      final = users_registrations_total.labels(status="success")._value.get()
+      assert final > initial
+  ```
+
+## Best Practices Summary
+
+### ✅ DO
+- ✅ Create maintenance-focused metrics only
+- ✅ Use standard metric types (Counter, Gauge, Histogram)
+- ✅ Follow naming conventions (snake_case, descriptive)
+- ✅ Keep cardinality low (< 1000 series per metric)
+- ✅ Use appropriate buckets for histograms
+- ✅ Document metrics clearly
+- ✅ Make metrics dashboard-ready
+- ✅ Test metrics collection
+
+### ❌ DON'T
+- ❌ Don't create business/marketing metrics
+- ❌ Don't create user tracking metrics
+- ❌ Don't use high-cardinality labels (user_id, session_id)
+- ❌ Don't create redundant metrics
+- ❌ Don't create non-actionable metrics
+- ❌ Don't use too many labels (> 5)
+- ❌ Don't create metrics without documentation
+- ❌ Don't duplicate existing metrics
+
+## Checklist Before Creating a Metric
+
+### Ask These Questions
+1. ✅ **Is this metric for maintenance/operations?** (Not marketing/business)
+2. ✅ **Can operations team use this for alerting?**
+3. ✅ **Is this metric actionable?** (Can we act on the data?)
+4. ✅ **Will this work in a dashboard?** (Grafana, Prometheus)
+5. ✅ **Is cardinality low enough?** (< 1000 unique series)
+6. ✅ **Does it follow naming standards?**
+7. ✅ **Is it documented?**
+8. ✅ **Is it tested?**
+
+### If Any Answer is "No"
+- **Reconsider** creating the metric
+- **Modify** the metric to meet requirements
+- **Use existing metrics** if possible
+
+## Example: Complete App Metrics Module
+
+```python
+"""Order service Prometheus metrics.
+
+All metrics are maintenance-focused and dashboard-ready.
+"""
+
+from prometheus_client import Counter, Histogram, Gauge
+
+# Order processing metrics
+orders_created_total = Counter(
+    "orders_created_total",
+    "Total number of orders created",
+    ["status"],  # success, failed, validation_error
+)
+
+orders_processing_duration_seconds = Histogram(
+    "orders_processing_duration_seconds",
+    "Order processing duration in seconds",
+    ["operation"],  # create, update, cancel
+    buckets=(0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0),
+)
+
+orders_processing_errors_total = Counter(
+    "orders_processing_errors_total",
+    "Total order processing errors",
+    ["operation", "error_type"],  # create, update, cancel | validation, payment, inventory
+)
+
+# Order queue metrics
+orders_queue_size = Gauge(
+    "orders_queue_size",
+    "Current number of orders in processing queue",
+)
+
+orders_queue_processing_duration_seconds = Histogram(
+    "orders_queue_processing_duration_seconds",
+    "Time orders spend in queue before processing",
+    buckets=(1.0, 5.0, 10.0, 30.0, 60.0, 300.0, 600.0),
+)
+
+# Payment processing metrics
+payments_processed_total = Counter(
+    "payments_processed_total",
+    "Total number of payments processed",
+    ["status", "method"],  # success, failed | credit_card, paypal, bank_transfer
+)
+
+payments_processing_duration_seconds = Histogram(
+    "payments_processing_duration_seconds",
+    "Payment processing duration in seconds",
+    ["method"],
+    buckets=(0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0),
+)
+
+__all__ = [
+    "orders_created_total",
+    "orders_processing_duration_seconds",
+    "orders_processing_errors_total",
+    "orders_queue_size",
+    "orders_queue_processing_duration_seconds",
+    "payments_processed_total",
+    "payments_processing_duration_seconds",
+]
+```

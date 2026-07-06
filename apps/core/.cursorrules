@@ -1,0 +1,420 @@
+# Cursor Rules for Core Package Maintenance
+
+## Core Package Overview
+
+The `apps/core` package provides **shared infrastructure and base functionality** used across all apps in the microservices template. It is the foundation layer that all other apps depend on.
+
+### Purpose
+- Provide base classes, mixins, and utilities shared across all apps
+- Manage application lifecycle (startup, shutdown, middleware)
+- Handle cross-cutting concerns (database, exceptions, logging)
+- Offer reusable infrastructure components
+
+### Key Principle
+**Core is for SHARED functionality only. If it's specific to one app, it doesn't belong in core.**
+
+## What Belongs in Core
+
+### ✅ DO Add to Core
+
+#### Infrastructure Components
+- **Database management** (`db.py`) - Database connection, session management, health checks
+- **Exception handling** (`exceptions.py`) - Base exception classes and handlers
+- **Middleware** (`middleware/`) - Shared middleware (logging, security, CORS, rate limiting)
+- **App factory** (`app_factory.py`) - FastAPI application creation and configuration
+- **Version management** (`version.py`) - Application version tracking
+
+#### Base Classes and Mixins
+- **Base model classes** (`models.py`) - SQLAlchemy base classes and mixins (TimestampMixin, BaseModel)
+- **Base exception classes** (`exceptions.py`) - BaseAPIException and standard exceptions
+
+#### Shared Utilities
+- **Pagination utilities** (`utils/pagination.py`) - SQL-level and Python-level pagination
+- **System information** (`system_info.py`) - System info gathering and formatting
+- **CLI commands** (`cli.py`) - Database migrations, configuration display
+
+#### Type Aliases
+- **Type definitions** (`types.py`) - Shared type aliases used across core modules
+
+### ❌ DON'T Add to Core
+
+#### App-Specific Code
+- ❌ **Business logic** - Any domain-specific business rules
+- ❌ **App-specific models** - Models that belong to a specific feature/app
+- ❌ **App-specific schemas** - Pydantic schemas for specific features
+- ❌ **App-specific services** - Business logic services
+- ❌ **App-specific routers** - API endpoints for specific features
+- ❌ **App-specific exceptions** - Exceptions specific to one app (use `apps/{app}/helpers/exceptions.py`)
+
+#### Feature-Specific Code
+- ❌ **Authentication logic** - Unless it's a base authentication framework
+- ❌ **Authorization logic** - Unless it's a base authorization framework
+- ❌ **Payment processing** - Business domain logic
+- ❌ **Email sending** - Unless it's a base email utility
+- ❌ **File upload handling** - Unless it's a base file utility
+
+#### Configuration
+- ❌ **App-specific settings** - Settings belong in `config/settings/`
+- ❌ **Environment-specific configs** - Use Dynaconf in `config/`
+
+## Core Package Structure
+
+```
+apps/core/
+├── __init__.py              # Empty (no exports needed)
+├── app_factory.py           # FastAPI app creation and router discovery
+├── db.py                    # Database manager and session management
+├── exceptions.py            # Base exceptions and handlers
+├── models.py                # Base model classes and mixins
+├── system_info.py           # System information utilities
+├── cli.py                   # CLI commands (migrations, config)
+├── version.py               # Version management
+├── types.py                 # Type aliases for core
+├── middleware/              # Shared middleware
+│   ├── __init__.py          # Only exports
+│   ├── registration.py      # Middleware registration
+│   ├── logging.py           # Logging middleware
+│   ├── timing.py            # Timing middleware
+│   ├── security_headers.py  # Security headers
+│   ├── rate_limiting.py     # Rate limiting
+│   ├── cors.py              # CORS configuration
+│   ├── request_size_limit.py # Request size limits
+│   └── debug_toolbar.py     # Debug toolbar
+└── utils/                   # Core utilities
+    ├── __init__.py          # Only exports
+    └── pagination.py        # Pagination utilities
+```
+
+## Maintenance Guidelines
+
+### Backward Compatibility
+
+#### ✅ DO Maintain Backward Compatibility
+- ✅ **Keep public APIs stable** - Don't remove or rename public functions/classes
+- ✅ **Add new functionality** - Extend existing classes/functions when possible
+- ✅ **Deprecate before removing** - Use deprecation warnings before removing features
+- ✅ **Version breaking changes** - Document breaking changes clearly
+- ✅ **Maintain import paths** - Keep existing import paths working
+
+#### ❌ DON'T Break Backward Compatibility
+- ❌ **Don't remove public APIs** - Other apps depend on core
+- ❌ **Don't change function signatures** - Use optional parameters for extensions
+- ❌ **Don't rename public classes/functions** - Use aliases if needed
+- ❌ **Don't change return types** - Extend, don't replace
+
+### Adding New Functionality
+
+#### Process for Adding to Core
+1. **Verify it's truly shared** - Used by 2+ apps or infrastructure-level
+2. **Check existing patterns** - Follow existing code structure
+3. **Add type aliases** - If using `dict[...]` or `tuple[...]` patterns
+4. **Add to appropriate module** - Or create new module if needed
+5. **Export from `__init__.py`** - If it's a new submodule
+6. **Update documentation** - Document new functionality
+7. **Test thoroughly** - Core changes affect all apps
+
+#### Example: Adding a New Utility
+```python
+# apps/core/utils/new_utility.py
+"""New utility functions for core."""
+
+from apps.core.types import SomeTypeAlias
+
+def new_utility_function(param: str) -> SomeTypeAlias:
+    """New utility function.
+
+    Args:
+        param: Parameter description
+
+    Returns:
+        Return value description
+    """
+    # Implementation
+    pass
+
+# apps/core/utils/__init__.py
+from .new_utility import new_utility_function
+
+__all__ = [
+    # ... existing exports ...
+    "new_utility_function",
+]
+```
+
+### Modifying Existing Functionality
+
+#### ✅ DO When Modifying
+- ✅ **Extend functionality** - Add optional parameters, new methods
+- ✅ **Fix bugs** - Bug fixes are always acceptable
+- ✅ **Improve performance** - Optimize without changing API
+- ✅ **Add features** - Add new methods/functions alongside existing ones
+- ✅ **Refactor internals** - Improve code quality without changing API
+
+#### ❌ DON'T When Modifying
+- ❌ **Don't change public APIs** - Function signatures, class interfaces
+- ❌ **Don't remove functionality** - Even if unused, may be used by apps
+- ❌ **Don't change behavior** - Existing behavior is a contract
+- ❌ **Don't break imports** - Keep import paths stable
+
+## Core-Specific Patterns
+
+### Database Management (`db.py`)
+
+#### Patterns
+- `DatabaseManager` - Singleton-like pattern (one per app instance)
+- Stored in `app.state.db_manager` - Access via `get_db_manager_from_app()`
+- `get_db()` - FastAPI dependency for database sessions
+- Always use async sessions - Never blocking operations
+
+#### ✅ DO
+- ✅ Use `DatabaseManager` for connection management
+- ✅ Use `get_db()` dependency in route handlers
+- ✅ Use `check_db_health()` for health checks
+- ✅ Handle database errors gracefully
+
+#### ❌ DON'T
+- ❌ Don't create database connections directly
+- ❌ Don't use blocking database operations
+- ❌ Don't access `app.state.db_manager` directly (use helper function)
+
+### Exception Handling (`exceptions.py`)
+
+#### Patterns
+- `BaseAPIException` - Base class for all API exceptions
+- Standard exceptions - `NotFoundError`, `ValidationError`, etc.
+- Centralized handlers - Registered in `register_exception_handlers()`
+- All handlers return `ORJSONResponse`
+
+#### ✅ DO
+- ✅ Inherit from `BaseAPIException` for new exceptions
+- ✅ Use standard exceptions when appropriate
+- ✅ Include relevant details in exceptions
+- ✅ Register handlers in `register_exception_handlers()`
+
+#### ❌ DON'T
+- ❌ Don't create app-specific exceptions in core
+- ❌ Don't bypass exception handlers
+- ❌ Don't return error responses directly (raise exceptions)
+
+### Middleware (`middleware/`)
+
+#### Patterns
+- Each middleware in separate file
+- Registration in `middleware/registration.py`
+- Export from `middleware/__init__.py`
+- Order matters - First registered = last executed
+
+#### ✅ DO
+- ✅ Create new middleware in separate file
+- ✅ Register in `register_middleware()` function
+- ✅ Export from `__init__.py`
+- ✅ Document middleware order and purpose
+- ✅ Use type aliases for complex types
+
+#### ❌ DON'T
+- ❌ Don't put middleware code in `__init__.py`
+- ❌ Don't register middleware directly in app factory
+- ❌ Don't create app-specific middleware in core
+
+### Models (`models.py`)
+
+#### Patterns
+- Mixins for reusable fields - `TimestampMixin`
+- Base model classes - `BaseModel` with common fields
+- All models inherit from `apps.core.db.Base`
+- Use SQLAlchemy 2.0 syntax
+
+#### ✅ DO
+- ✅ Create mixins for common field patterns
+- ✅ Use `__abstract__ = True` for base models
+- ✅ Document mixin usage
+- ✅ Follow SQLAlchemy 2.0 patterns
+
+#### ❌ DON'T
+- ❌ Don't create app-specific models in core
+- ❌ Don't use old SQLAlchemy syntax
+- ❌ Don't create concrete models (only mixins and base classes)
+
+### Utilities (`utils/`)
+
+#### Patterns
+- Pure functions when possible
+- Type aliases for complex return types
+- Export from `__init__.py`
+- Document usage and examples
+
+#### ✅ DO
+- ✅ Keep utilities pure and reusable
+- ✅ Use type aliases for return types
+- ✅ Document with examples
+- ✅ Export from `__init__.py`
+
+#### ❌ DON'T
+- ❌ Don't add business logic to utilities
+- ❌ Don't create app-specific utilities
+- ❌ Don't use inline type patterns
+
+## Type Aliases in Core
+
+### Location
+- All core type aliases in `apps/core/types.py`
+- Use for all `dict[...]`, `list[...]`, `tuple[...]` patterns
+- Export from `__init__.py` if needed
+
+### Naming Conventions
+- Use descriptive names ending with type: `ConfigDict`, `SystemInfoDict`
+- Use `Result` suffix for tuples: `ReadinessResult`, `DbHealthResult`
+- Use `List` suffix for lists: `RequestCountsList`
+
+### ✅ DO
+- ✅ Add type aliases for all complex types
+- ✅ Use descriptive, consistent names
+- ✅ Document type aliases
+- ✅ Export from `__init__.py` if used externally
+
+### ❌ DON'T
+- ❌ Don't use inline patterns in function signatures
+- ❌ Don't create aliases for simple types (`str`, `int`, `bool`)
+- ❌ Don't duplicate aliases across modules
+
+## Import Patterns
+
+### Core Internal Imports
+```python
+# Within core modules
+from apps.core.db import Base, DatabaseManager
+from apps.core.exceptions import BaseAPIException, NotFoundError
+from apps.core.types import ConfigDict, SystemInfoDict
+from apps.core.utils import PaginationParams, paginate_query
+```
+
+### External Imports (from apps)
+```python
+# From other apps
+from apps.core.db import Base, get_db
+from apps.core.exceptions import NotFoundError, ValidationError
+from apps.core.models import TimestampMixin, BaseModel
+from apps.core.utils import PaginationParams, PaginatedResponse
+```
+
+### ✅ DO
+- ✅ Use absolute imports within core
+- ✅ Export public APIs from `__init__.py` when needed
+- ✅ Use `TYPE_CHECKING` for forward references
+
+### ❌ DON'T
+- ❌ Don't use relative imports across core modules
+- ❌ Don't export private/internal functions
+- ❌ Don't create circular dependencies
+
+## Testing Core
+
+### Test Requirements
+- **High test coverage** - Core is critical infrastructure
+- **Test all public APIs** - Every function/class should be tested
+- **Test edge cases** - Error handling, boundary conditions
+- **Test backward compatibility** - Ensure changes don't break existing behavior
+
+### ✅ DO
+- ✅ Write tests for all new functionality
+- ✅ Test error cases and edge conditions
+- ✅ Test with multiple apps if possible
+- ✅ Test backward compatibility
+
+### ❌ DON'T
+- ❌ Don't skip tests for core code
+- ❌ Don't test implementation details (test behavior)
+- ❌ Don't create tests that depend on app-specific code
+
+## Code Quality Standards
+
+### Follow All Project Rules
+- ✅ Use type hints (with type aliases)
+- ✅ Include docstrings (Google style)
+- ✅ No code in `__init__.py` files
+- ✅ Use `ORJSONResponse` for JSON responses
+- ✅ Use structured logging
+- ✅ Follow async/await patterns
+
+### Core-Specific Standards
+- ✅ **Stability first** - Core must be stable and reliable
+- ✅ **Documentation** - Document all public APIs thoroughly
+- ✅ **Error handling** - Handle errors gracefully
+- ✅ **Performance** - Core code is used everywhere, optimize carefully
+
+## Common Mistakes to Avoid
+
+### ❌ DON'T Do These
+
+1. **Adding app-specific code to core**
+   ```python
+   # ❌ BAD - App-specific model in core
+   class User(Base):
+       __tablename__ = "users"
+       email: Mapped[str] = ...
+
+   # ✅ GOOD - Base model in core, User model in apps/users/models/
+   class BaseModel(Base, TimestampMixin):
+       __abstract__ = True
+   ```
+
+2. **Breaking backward compatibility**
+   ```python
+   # ❌ BAD - Changed function signature
+   def get_db(session_maker):  # Old
+   def get_db(request):  # New - BREAKS existing code
+
+   # ✅ GOOD - Add new function, keep old one
+   def get_db_legacy(session_maker):  # Deprecated
+   def get_db(request):  # New
+   ```
+
+3. **Putting code in __init__.py**
+   ```python
+   # ❌ BAD - Code in __init__.py
+   def register_middleware(app):
+       # 100 lines of code
+
+   # ✅ GOOD - Code in separate file
+   # middleware/registration.py
+   def register_middleware(app):
+       # 100 lines of code
+
+   # middleware/__init__.py
+   from .registration import register_middleware
+   ```
+
+4. **Using inline type patterns**
+   ```python
+   # ❌ BAD - Inline pattern
+   def get_config() -> dict[str, Any]:
+       ...
+
+   # ✅ GOOD - Type alias
+   from apps.core.types import ConfigDict
+   def get_config() -> ConfigDict:
+       ...
+   ```
+
+## Summary
+
+### Core Package Principles
+1. **Shared functionality only** - If it's app-specific, it doesn't belong
+2. **Stability first** - Maintain backward compatibility
+3. **Infrastructure focus** - Base classes, utilities, cross-cutting concerns
+4. **High quality** - Core code affects all apps, must be reliable
+
+### Key Rules
+- ✅ Add shared infrastructure and base classes
+- ✅ Maintain backward compatibility
+- ✅ Use type aliases for complex types
+- ✅ Export from `__init__.py` (no code in `__init__.py`)
+- ❌ Don't add app-specific code
+- ❌ Don't break existing APIs
+- ❌ Don't put code in `__init__.py` files
+- ❌ Don't use inline type patterns
+
+### When in Doubt
+- **Ask**: "Is this used by multiple apps or is it infrastructure-level?"
+- **If yes**: Consider adding to core (with proper review)
+- **If no**: Put it in the specific app or create a new app

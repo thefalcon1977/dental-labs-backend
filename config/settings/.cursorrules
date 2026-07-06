@@ -1,0 +1,296 @@
+---
+alwaysApply: true
+---
+
+# Configuration Management Rules
+
+## Settings File Purpose
+
+### settings.toml - Application Configuration Only
+- **Purpose**: Application-level configuration for developers
+- **Use for**: Default values, feature flags, application behavior settings
+- **Do NOT use for**: Sensitive data, DevOps configuration, environment-specific secrets
+
+### What Belongs in settings.toml
+- ✅ Application feature flags (`ENABLE_METRICS`, `DEBUG`)
+- ✅ Default application behavior (`LOG_LEVEL`, `DEFAULT_TIMEZONE`)
+- ✅ Non-sensitive configuration (`HOST`, `PORT`, `ALLOWED_HOSTS`)
+- ✅ Development defaults (for local development)
+- ✅ Application structure settings (CORS config, security headers config)
+- ✅ Default pool sizes, timeouts, limits (application tuning)
+
+### What Does NOT Belong in settings.toml
+- ❌ **Sensitive credentials** (passwords, API keys, secrets, tokens)
+- ❌ **Database passwords** (use environment variables)
+- ❌ **Client secrets** (Keycloak, OAuth, etc.)
+- ❌ **Admin credentials** (usernames, passwords)
+- ❌ **Production URLs/hosts** (use environment variables)
+- ❌ **DevOps configuration** (deployment settings, infrastructure config)
+- ❌ **Environment-specific secrets** (different per environment)
+
+## Sensitive Information Handling
+
+### Never Commit Sensitive Data
+- **Never** put passwords, secrets, or API keys in `settings.toml`
+- **Never** commit real credentials to version control
+- Use placeholder values with clear indication they need to be replaced
+- Example:
+  ```toml
+  # ❌ WRONG - Real password in file
+  [database]
+  PASSWORD = "my_real_password_123"
+
+  # ✅ CORRECT - Placeholder indicating it should be set via env
+  [database]
+  # PASSWORD must be set via APP_DATABASE__PASSWORD environment variable
+  # Default value for development only
+  PASSWORD = "postgres"  # Development default, override in production
+  ```
+
+### Environment Variables for Sensitive Data
+- Use environment variables with `APP_` prefix for sensitive data
+- Priority order (highest to lowest):
+  1. OS Environment variables (`APP_DATABASE__PASSWORD`)
+  2. `.env` file variables (`APP_DATABASE__PASSWORD`)
+  3. `settings.toml` file (defaults only)
+- Example:
+  ```bash
+  # In .env file (not committed to git)
+  APP_DATABASE__PASSWORD=real_production_password
+  APP_KEYCLOAK__CLIENT_SECRET=real_client_secret
+  APP_SECRET_KEY=real_secret_key_here
+  ```
+
+## DevOps Configuration
+
+### DevOps Settings Should NOT Be in settings.toml
+- **Infrastructure configuration** belongs in deployment configs (Kubernetes, Docker, etc.)
+- **Environment-specific URLs** should be set via environment variables
+- **Production secrets** should be managed by DevOps tools (secrets managers, CI/CD)
+- **Deployment-specific settings** should not be in application config
+
+### Where DevOps Configuration Belongs
+- ✅ **Kubernetes**: ConfigMaps and Secrets
+- ✅ **Docker**: Environment variables in docker-compose.yml or Dockerfile
+- ✅ **CI/CD**: Pipeline environment variables
+- ✅ **Secrets Managers**: AWS Secrets Manager, HashiCorp Vault, etc.
+- ✅ **Infrastructure as Code**: Terraform, CloudFormation outputs
+
+### Example: Correct Separation
+
+#### settings.toml (Application Config)
+```toml
+[default]
+# Application behavior settings
+DEBUG = false
+LOG_LEVEL = "INFO"
+ENABLE_METRICS = true
+
+# Application structure (non-sensitive)
+HOST = "0.0.0.0"
+PORT = 8000
+
+# Feature flags
+ENABLE_RATE_LIMITING = true
+RATE_LIMIT_REQUESTS_PER_MINUTE = 60
+
+[database]
+# Application-level defaults (development only)
+ENABLED = false
+DRIVER = "postgresql+asyncpg"
+POOL_SIZE = 5
+MAX_OVERFLOW = 10
+
+# ❌ DO NOT PUT HERE:
+# PASSWORD = "..."  # Use APP_DATABASE__PASSWORD env var
+# HOST = "prod-db.example.com"  # Use APP_DATABASE__HOST env var
+```
+
+#### .env (Local Development - Not Committed)
+```bash
+# Local development overrides
+APP_DATABASE__PASSWORD=local_dev_password
+APP_KEYCLOAK__CLIENT_SECRET=local_dev_secret
+APP_SECRET_KEY=local_dev_secret_key_32_chars_minimum
+```
+
+#### Production Environment Variables (DevOps Managed)
+```bash
+# Set by DevOps in production environment
+APP_DATABASE__HOST=prod-db.internal.example.com
+APP_DATABASE__PASSWORD=<from-secrets-manager>
+APP_KEYCLOAK__SERVER_URL=https://auth.example.com
+APP_KEYCLOAK__CLIENT_SECRET=<from-secrets-manager>
+APP_SECRET_KEY=<from-secrets-manager>
+```
+
+## Configuration Priority
+
+### Dynaconf Priority Order
+1. **OS Environment Variables** (highest priority)
+   - Format: `APP_SETTING_NAME` or `APP_NESTED__SETTING`
+   - Example: `APP_DATABASE__PASSWORD`, `APP_SECRET_KEY`
+2. **.env File Variables**
+   - Same format as environment variables
+   - Local development overrides
+3. **settings.toml File** (lowest priority)
+   - Default values only
+   - Application-level configuration
+
+### Best Practices
+- ✅ Put defaults in `settings.toml`
+- ✅ Override with environment variables in production
+- ✅ Use `.env` for local development (add to `.gitignore`)
+- ✅ Document required environment variables in README
+- ✅ Use validators to ensure required settings are provided
+- ❌ Don't put production values in `settings.toml`
+- ❌ Don't commit `.env` files
+- ❌ Don't put secrets in version control
+
+## Validators for Required Settings
+
+### Sensitive Settings Must Be Validated
+- Use Dynaconf validators to ensure required settings are provided
+- Mark sensitive settings as `must_exist=True` in validators
+- Example:
+  ```python
+  # In validators.py
+  Validator("SECRET_KEY", must_exist=True, cast=str, len_min=32),
+  Validator("database.PASSWORD", must_exist=True, cast=str),
+  Validator("keycloak.CLIENT_SECRET", must_exist=True, cast=str),
+  ```
+
+### Development vs Production
+- Provide defaults in validators for development
+- Require environment variables for production
+- Example:
+  ```python
+  # Development default, but must be overridden in production
+  Validator(
+      "database.PASSWORD",
+      default="postgres",  # Development default
+      cast=str,
+      # In production, must be set via APP_DATABASE__PASSWORD
+  )
+  ```
+
+## File Organization
+
+### settings.toml Structure
+- Group related settings in sections
+- Use environment-specific sections (`[development]`, `[production]`)
+- Keep defaults in `[default]` section
+- Example:
+  ```toml
+  [default]
+  # Application defaults
+
+  [development]
+  # Development overrides (non-sensitive)
+  DEBUG = true
+  LOG_LEVEL = "DEBUG"
+
+  [production]
+  # Production overrides (non-sensitive)
+  DEBUG = false
+  LOG_LEVEL = "INFO"
+  # Sensitive values come from environment variables
+  ```
+
+### .env File (Local Development)
+- Place in project root
+- Add to `.gitignore`
+- Document required variables in README
+- Example `.gitignore`:
+  ```
+  .env
+  .env.local
+  .env.*.local
+  ```
+
+## Security Checklist
+
+### Before Committing settings.toml
+- ✅ No real passwords or secrets
+- ✅ No production URLs or hosts
+- ✅ Only application-level configuration
+- ✅ Placeholder values clearly marked
+- ✅ Documentation for required environment variables
+- ✅ Validators ensure required settings are provided
+
+### Before Deploying
+- ✅ All sensitive settings set via environment variables
+- ✅ `.env` file not committed
+- ✅ Production secrets in secrets manager
+- ✅ Environment variables documented
+- ✅ Validators catch missing required settings
+
+## Examples
+
+### ✅ Good: Application Configuration
+```toml
+[default]
+# Application behavior
+DEBUG = false
+LOG_LEVEL = "INFO"
+ENABLE_METRICS = true
+
+# Application structure
+HOST = "0.0.0.0"
+PORT = 8000
+
+# Feature flags
+ENABLE_RATE_LIMITING = true
+RATE_LIMIT_REQUESTS_PER_MINUTE = 60
+
+[database]
+# Application defaults (development only)
+ENABLED = false
+DRIVER = "postgresql+asyncpg"
+POOL_SIZE = 5
+# PASSWORD must be set via APP_DATABASE__PASSWORD
+```
+
+### ❌ Bad: Sensitive Data in settings.toml
+```toml
+[default]
+# ❌ WRONG - Real password
+[database]
+PASSWORD = "production_password_123"
+
+# ❌ WRONG - Real secret
+[keycloak]
+CLIENT_SECRET = "real-secret-key-here"
+
+# ❌ WRONG - Production URL
+SERVER_URL = "https://production.example.com"
+```
+
+### ✅ Good: Environment Variables
+```bash
+# .env (not committed)
+APP_DATABASE__PASSWORD=local_dev_password
+APP_KEYCLOAK__CLIENT_SECRET=local_dev_secret
+APP_SECRET_KEY=local_dev_secret_key_32_chars_minimum
+
+# Production (set by DevOps)
+APP_DATABASE__PASSWORD=<from-secrets-manager>
+APP_KEYCLOAK__CLIENT_SECRET=<from-secrets-manager>
+APP_SECRET_KEY=<from-secrets-manager>
+```
+
+## Summary
+
+### Remember
+1. **settings.toml** = Application-level configuration for developers
+2. **Environment variables** = Sensitive data and DevOps configuration
+3. **Never commit** sensitive information to version control
+4. **Always validate** required settings with validators
+5. **Document** required environment variables
+
+### Rule of Thumb
+- If it's **sensitive** → Use environment variable
+- If it's **DevOps-related** → Use environment variable or deployment config
+- If it's **application behavior** → Can go in settings.toml
+- If it's **environment-specific** → Use environment variable
+- If it's **developer-friendly default** → Can go in settings.toml

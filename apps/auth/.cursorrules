@@ -1,0 +1,552 @@
+# Auth App - Development Rules and Best Practices
+
+## Overview
+
+The `apps/auth` module provides local user authentication and authorization.
+It owns user identity, password verification, access token creation, current-user
+dependencies, role-based access control (RBAC), and permission checks.
+
+Do not integrate an external identity provider in this app unless explicitly
+approved. Keep authentication logic centered on the local user model and the
+repository/service layers described below.
+
+## Architecture
+
+### Directory Structure
+
+```text
+apps/auth/
+|-- dependencies/      # FastAPI dependencies for auth/RBAC
+|-- helpers/           # App-specific enums and exceptions
+|-- models/            # SQLAlchemy user and auth-related models
+|-- repository/        # DAL/BLL for user reads and writes
+|-- routers/           # Authentication and user endpoints
+|-- schemas/           # Pydantic request/response schemas
+|-- services/          # Business logic orchestration
+|-- utils/             # Password hashing, token, and security helpers
+`-- tests/             # Unit and integration tests
+```
+
+### Layer Responsibilities
+
+#### Models (`models/`)
+
+- Define SQLAlchemy 2.0 models for users and auth-owned records.
+- All models inherit from `apps.core.db.Base` directly or through an abstract
+  auth base model.
+- Use `Mapped` and `mapped_column` for every field.
+- Keep password fields write-only at API boundaries; never expose
+  `hashed_password` in response schemas.
+
+#### Repository (`repository/`)
+
+- `dal.py`: read-only queries such as `get_user_by_id`,
+  `get_user_by_email`, and paginated user listing.
+- `bll.py`: write operations such as create, update password, activate,
+  deactivate, and delete.
+- DAL returns model instances. BLL returns model instances and owns
+  transactions.
+
+#### Services (`services/`)
+
+- Orchestrate repository calls and auth utilities.
+- Convert models to schemas.
+- Validate credentials and user state.
+- Create access tokens after successful authentication.
+- Do not run raw database queries in services.
+
+#### Dependencies (`dependencies/`)
+
+- `auth.py`: current-user dependencies such as `get_current_user` and
+  `get_optional_user`.
+- `rbac.py`: role and permission dependencies such as `require_roles` and
+  `require_permissions`.
+- Dependencies return `UserResponse`/`CurrentUser` schema objects or raise
+  `UnauthorizedError`/`ForbiddenError`.
+
+#### Utils (`utils/`)
+
+- `password.py`: password hashing and verification helpers.
+- `tokens.py`: access token creation and validation helpers.
+- `security.py`: shared security primitives and constants.
+- Utils must not create database sessions or return HTTP responses.
+
+## User Base Model
+
+### Required Model Pattern
+
+Create a reusable abstract base model for auth users. Concrete user models
+should inherit from it and define `__tablename__`.
+
+```python
+"""User models for the auth app."""
+
+from datetime import datetime
+from uuid import uuid4
+
+from sqlalchemy import DateTime, String, func
+from sqlalchemy.orm import Mapped, mapped_column
+
+from apps.core.db import Base
+
+
+class UserBase(Base):
+    """Abstract base model for local authenticated users."""
+
+    __abstract__ = True
+
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=lambda: str(uuid4()),
+        nullable=False,
+    )
+    email: Mapped[str] = mapped_column(
+        String(255),
+        unique=True,
+        index=True,
+        nullable=False,
+    )
+    username: Mapped[str] = mapped_column(
+        String(150),
+        unique=True,
+        index=True,
+        nullable=False,
+    )
+    hashed_password: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+    )
+    first_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    last_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    is_verified: Mapped[bool] = mapped_column(default=False, nullable=False)
+    is_superuser: Mapped[bool] = mapped_column(default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        onupdate=func.now(),
+        nullable=True,
+    )
+
+
+class User(UserBase):
+    """Concrete local user model."""
+
+    __tablename__ = "auth_users"
+```
+
+### Model Rules
+
+- Normalize emails before persistence.
+- Enforce uniqueness with database constraints for `email` and `username`.
+- Store only password hashes, never plaintext passwords.
+- Keep `is_active` checks in authentication flows.
+- Use `is_superuser` only for explicit admin bypass behavior.
+- Add roles/permissions as related models only when the project needs granular
+  authorization beyond basic superuser checks.
+
+## Schemas
+
+### Required Schemas
+
+- `UserCreate`: registration input, including password.
+- `UserUpdate`: optional user profile and state updates.
+- `UserResponse`: public user representation, excluding password fields.
+- `CurrentUser`: user identity used by dependencies and services.
+- `LoginRequest`: email or username plus password.
+- `TokenResponse`: access token and token metadata.
+- `PasswordChangeRequest`: current password plus new password.
+
+### Schema Rules
+
+- Use Pydantic v2.
+- Use `ConfigDict(from_attributes=True)` on response schemas.
+- Never expose `hashed_password`, password reset tokens, or other secrets.
+- Add `Field` descriptions for public request fields.
+- Keep request and response schemas separate.
+
+## Authentication Flow
+
+### Login Flow
+
+```text
+Client -> POST /login (identifier, password)
+    |
+Router -> auth_service.login_user()
+    |
+Service -> DAL get user by email/username
+    |
+Service -> verify password and active status
+    |
+Service -> create access token
+    |
+Return TokenResponse
+```
+
+### Current User Flow
+
+```text
+Client -> Request with Authorization: Bearer <token>
+    |
+Dependency -> token utility validates token
+    |
+Dependency -> DAL loads user by token subject
+    |
+Dependency -> checks active status
+    |
+Return CurrentUser to route handler
+```
+
+### RBAC Flow
+
+```text
+Route Handler -> Depends(require_roles("admin"))
+    |
+RBAC Dependency -> get_current_user()
+    |
+RBAC Dependency -> check user roles/permissions/superuser status
+    |
+Raise ForbiddenError if insufficient permissions
+    |
+Route handler executes if authorized
+```
+
+## Endpoint Standards
+
+### Required Endpoints
+
+- `POST /register` - Create a local user account.
+- `POST /login` - Authenticate and return an access token.
+- `GET /me` - Return the authenticated user.
+- `PATCH /me` - Update the authenticated user profile.
+- `POST /change-password` - Change password for authenticated user.
+- `POST /logout` - Client-facing logout endpoint when token invalidation is
+  supported.
+
+### Route Rules
+
+- Every route must include `summary`, `description`, `response_model`, and
+  `status_code`.
+- Every description must include Big O complexity.
+- Document all relevant error responses.
+- Routes call services only. Do not call DAL/BLL directly from routers.
+- Raise typed exceptions instead of returning error responses manually.
+
+### Endpoint Example
+
+```python
+@router.get(
+    "/me",
+    response_model=schemas.UserResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get current user",
+    description=(
+        "Return the authenticated local user. "
+        "Time: O(1) - Space: O(1)"
+    ),
+    responses={
+        401: {"description": "Authentication required or invalid"},
+        403: {"description": "User account is disabled"},
+    },
+)
+async def get_me(
+    current_user: schemas.CurrentUser = Depends(get_current_user),
+) -> schemas.UserResponse:
+    """Return the current authenticated user."""
+    return schemas.UserResponse.model_validate(current_user)
+```
+
+## Password Handling
+
+### DO
+
+- Use a strong password hashing algorithm such as Argon2 or bcrypt.
+- Centralize hashing and verification in `utils/password.py`.
+- Validate password length and complexity in schemas or services.
+- Require the current password before password changes.
+- Log password-change events without logging password values.
+
+### DON'T
+
+- Don't store plaintext passwords.
+- Don't log passwords, password hashes, or reset tokens.
+- Don't compare password hashes manually in services.
+- Don't expose whether an email exists during login failures.
+
+## Token Handling
+
+### DO
+
+- Use short-lived access tokens.
+- Store the user ID in the token subject.
+- Validate token signature, expiry, and expected algorithm.
+- Keep token settings in `config/settings/`.
+- Use environment variables for secrets.
+
+### DON'T
+
+- Don't hardcode token secrets.
+- Don't log access tokens.
+- Don't put sensitive PII in token payloads.
+- Don't trust token payloads without loading and validating the user from the
+  database when account state matters.
+
+## Repository Patterns
+
+### DAL Examples
+
+```python
+async def get_user_by_email(
+    db: AsyncSession,
+    email: str,
+) -> models.User | None:
+    """Get a user by normalized email."""
+    result = await db.execute(
+        select(models.User).where(models.User.email == email)
+    )
+    return result.scalar_one_or_none()
+```
+
+### BLL Examples
+
+```python
+async def create_user(
+    db: AsyncSession,
+    user_data: schemas.UserCreate,
+) -> models.User:
+    """Create a local user in a transaction."""
+    existing_user = await dal.get_user_by_email(db, user_data.email)
+    if existing_user:
+        raise UserAlreadyExistsError(email=user_data.email)
+
+    user = models.User(
+        email=normalize_email(user_data.email),
+        username=user_data.username,
+        hashed_password=hash_password(user_data.password),
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    return user
+```
+
+## Exceptions
+
+### Exception Hierarchy
+
+Define app-specific exceptions in `apps/auth/helpers/exceptions.py`.
+All exceptions must inherit from `BaseAPIException`.
+
+- `AuthError` - Base auth exception.
+- `InvalidCredentialsError` (401) - Login failed.
+- `InactiveUserError` (403) - User account is inactive.
+- `UserNotFoundError` (404) - User not found.
+- `UserAlreadyExistsError` (409) - Email or username already exists.
+- `InvalidTokenError` (401) - Token is invalid or malformed.
+- `TokenExpiredError` (401) - Token has expired.
+- `InsufficientPermissionsError` (403) - User lacks required permission.
+
+### Error Rules
+
+- Use generic messages for credential failures.
+- Include stable IDs in `details`, not secrets or PII.
+- Roll back transactions after database errors in BLL.
+- Do not return `ORJSONResponse` manually from routers for errors.
+
+## Configuration
+
+### Required Settings
+
+- `auth.SECRET_KEY` - Token signing secret.
+- `auth.ACCESS_TOKEN_EXPIRE_MINUTES` - Access token lifetime.
+- `auth.ALGORITHM` - Token signing algorithm.
+- `auth.PASSWORD_MIN_LENGTH` - Minimum password length.
+
+### Optional Settings
+
+- `auth.ISSUER` - Token issuer value.
+- `auth.AUDIENCE` - Token audience value.
+- `auth.ALLOW_REGISTRATION` - Enable public registration.
+- `auth.REQUIRE_EMAIL_VERIFICATION` - Require verified email before login.
+- `auth.LOGIN_RATE_LIMIT_ENABLED` - Enable brute-force protection when
+  middleware supports it.
+
+### Configuration Rules
+
+- Add defaults only when safe.
+- Add validators for required secrets and bounded numeric values.
+- Never commit real secrets in settings files.
+
+## Security Best Practices
+
+### DO
+
+- Validate all request bodies with schemas.
+- Normalize email addresses before lookup and persistence.
+- Return the same login error for unknown users and wrong passwords.
+- Log authentication successes and failures with stable identifiers only.
+- Use 401 for missing/invalid authentication.
+- Use 403 for authenticated users without permission.
+- Protect write endpoints with `get_current_user`.
+- Add database uniqueness constraints for identity fields.
+
+### DON'T
+
+- Don't expose internal auth errors to clients.
+- Don't log tokens, passwords, hashes, cookies, or authorization headers.
+- Don't bypass service/repository layers.
+- Don't put business logic in routers.
+- Don't use blocking I/O in async routes/services.
+- Don't create database sessions manually.
+
+## Testing Patterns
+
+### Required Tests
+
+- Register user success and duplicate-user conflict.
+- Login success.
+- Login failure with wrong password.
+- Login failure with unknown user.
+- Inactive user cannot log in.
+- Current-user dependency with valid token.
+- Current-user dependency with expired/invalid token.
+- RBAC success and failure.
+- Password change success and failure.
+
+### Test Example
+
+```python
+@pytest.mark.asyncio
+async def test_login_invalid_credentials(client: AsyncClient) -> None:
+    """Invalid credentials return a generic unauthorized error."""
+    response = await client.post(
+        "/auth/login",
+        json={"identifier": "missing@example.com", "password": "wrong"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["type"] == "InvalidCredentialsError"
+```
+
+## Integration Patterns
+
+### Using Auth in Other Apps
+
+```python
+from apps.auth.dependencies.auth import get_current_user
+from apps.auth.schemas.user import CurrentUser
+
+
+@router.post(
+    "/resources",
+    response_model=schemas.ResourceResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create resource",
+    description="Create a resource for the current user. Time: O(1) - Space: O(1)",
+)
+async def create_resource(
+    resource_data: schemas.ResourceCreate,
+    current_user: CurrentUser = Depends(get_current_user),
+) -> schemas.ResourceResponse:
+    """Create a resource with authenticated user context."""
+    return await services.create_resource(resource_data, current_user)
+```
+
+### Passing User Context to Services
+
+- Pass `CurrentUser` from router to service when user context is required.
+- Services may use `current_user.id` for ownership/audit fields.
+- Services should not read `Request` unless truly needed.
+
+## Logging Patterns
+
+### Success Logging
+
+```python
+logger.info(
+    "User authenticated",
+    user_id=user.id,
+    username=user.username,
+)
+```
+
+### Failure Logging
+
+```python
+logger.warning(
+    "Authentication failed",
+    identifier_hash=hash_identifier(login_data.identifier),
+    reason="invalid_credentials",
+)
+```
+
+### Authorization Logging
+
+```python
+logger.warning(
+    "Access denied",
+    user_id=user.id,
+    required_roles=list(required_roles),
+)
+```
+
+## Performance Considerations
+
+- User lookup by `id`, `email`, and `username` must use indexed columns.
+- List endpoints must use SQL-level pagination.
+- Password verification is intentionally expensive; keep it out of loops.
+- Avoid N+1 relationship loading for role/permission checks.
+- Keep login and current-user dependencies async end to end.
+
+## Migration and Updates
+
+### Adding New User Fields
+
+1. Add the field to the model with type hints.
+2. Add an Alembic migration.
+3. Update request/response schemas only when the field belongs in the API.
+4. Add validators when the field accepts user input.
+5. Add tests for creation, update, and serialization behavior.
+
+### Adding RBAC
+
+1. Add role/permission models or enum values.
+2. Add DAL queries with eager loading where needed.
+3. Add RBAC dependency functions.
+4. Add 403 error docs to protected endpoints.
+5. Add success and failure tests.
+
+## Troubleshooting
+
+### Login Fails
+
+- Check user exists by normalized email/username.
+- Check user is active.
+- Check password hash verification.
+- Check token secret and algorithm configuration.
+
+### Current User Fails
+
+- Check Authorization header format.
+- Check token expiry.
+- Check token subject maps to an active user.
+- Check database connectivity.
+
+### Authorization Denied
+
+- Check required roles or permissions.
+- Check user assigned roles/permissions.
+- Check dependency ordering on the endpoint.
+
+## References
+
+- JWT Specification: https://tools.ietf.org/html/rfc7519
+- FastAPI Dependencies: https://fastapi.tiangolo.com/tutorial/dependencies/
+- Project Architecture: See `.cursor/rules/architecture.mdc`
+- Error Handling: See `.cursor/rules/fastapi-error-handling.mdc`
+- Security: See `.cursor/rules/security.mdc`

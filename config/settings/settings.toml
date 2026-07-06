@@ -1,0 +1,195 @@
+[default]
+
+# Application Settings
+SERVICE_NAME = "dental-labs-backend"
+DEBUG = true
+LOG_LEVEL = "DEBUG"
+ENABLE_METRICS = true
+ENABLE_DOCUMENTATION = true  # Enable/disable Sphinx documentation endpoint
+DEFAULT_TIMEZONE = "UTC"
+HOST = "0.0.0.0"
+PORT = 8000
+ALLOWED_HOSTS = ["*"]
+
+# CORS Configuration
+[cors]
+ALLOW_CREDENTIALS = true
+ALLOWED_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
+ALLOWED_HEADERS = ["Accept", "Accept-Language", "Content-Language", "Content-Type", "Authorization", "X-Requested-With", "X-Request-ID", "Origin", "Cache-Control", "Pragma", "X-API-Key", "X-System-User", "X-System-Secret"]
+EXPOSED_HEADERS = ["X-Request-ID", "X-Process-Time", "Content-Type", "Content-Length", "X-Estimated-Bytes"]
+MAX_AGE = 3600
+
+# Security Configuration
+[security]
+# HSTS (HTTP Strict Transport Security)
+ENABLE_HSTS = false  # Set to true in production
+HSTS_MAX_AGE = 31536000  # 1 year in seconds
+HSTS_INCLUDE_SUBDOMAINS = true
+HSTS_PRELOAD = false
+# Security Headers
+X_FRAME_OPTIONS = "DENY"  # Options: DENY, SAMEORIGIN, ALLOW-FROM
+X_XSS_PROTECTION = "1; mode=block"
+REFERRER_POLICY = "strict-origin-when-cross-origin"
+CROSS_ORIGIN_OPENER_POLICY = "same-origin"
+CROSS_ORIGIN_RESOURCE_POLICY = "same-origin"
+# Content Security Policy (CSP) - customize based on your needs
+# CONTENT_SECURITY_POLICY = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+# Permissions Policy - control browser features
+# PERMISSIONS_POLICY = "geolocation=(), microphone=(), camera=()"
+# Rate Limiting
+ENABLE_RATE_LIMITING = true
+RATE_LIMIT_REQUESTS_PER_MINUTE = 60
+# Request Size Limits
+MAX_REQUEST_SIZE_MB = 10  # Maximum request body size in MB
+
+# Logging Configuration (console only)
+[logging]
+SQLALCHEMY_LOG_LEVEL = "WARNING"
+STARTUP_INFO_MODE = "full"
+
+# Database Configuration (Optional)
+[database]
+ENABLED = false
+DRIVER = "postgresql+asyncpg"
+DB_FIRST = true
+POOL_SIZE = 5
+MAX_OVERFLOW = 10
+POOL_PRE_PING = true
+POOL_RECYCLE = 3600
+POOL_TIMEOUT = 30
+
+# Redis Configuration (Optional)
+[redis]
+ENABLED = false
+SSL = false
+SOCKET_TIMEOUT = 5
+SOCKET_CONNECT_TIMEOUT = 5
+RETRY_ON_TIMEOUT = true
+MAX_CONNECTIONS = 50
+
+# Auth OTP (two-step login) — requires Redis
+[auth]
+OTP_ENABLED = false
+OTP_SESSION_TTL_SECONDS = 300
+OTP_MAX_ATTEMPTS = 5
+OTP_RATE_LIMIT_LOGIN_PER_MIN = 10
+OTP_RATE_LIMIT_VERIFY_PER_MIN = 20
+# OTP code validity: user has this many seconds to enter the code; no new OTP (login/resend) until expired
+OTP_VALIDITY_SECONDS = 120
+# Resend OTP: max requests per session per window (prevents abuse / SMS bombing)
+OTP_RESEND_MAX_PER_SESSION = 3
+OTP_RESEND_WINDOW_SECONDS = 900
+# SMS delivery: when false, POST to OTP_SMS_URL with {"phone": "...", "message": "..."}
+OTP_SMS_MOCK_ENABLED = true
+# SMS gateway URL (e.g. http://host:port/sms/send). Required when OTP_SMS_MOCK_ENABLED is false.
+OTP_SMS_URL = ""
+# OTP bypass: static code that bypasses verification (for development/testing only)
+OTP_BYPASS_ENABLED = false
+# Static bypass code (only works when OTP_BYPASS_ENABLED is true)
+OTP_BYPASS_CODE = ""
+
+# Keycloak Configuration
+[keycloak]
+ENABLED = false
+
+# Optional: dedicated client for Admin API (principals/users-groups list).
+# If set, client_credentials token uses these; otherwise CLIENT_ID/CLIENT_SECRET.
+# The admin client must have Client authentication ON and Service accounts enabled.
+# ADMIN_CLIENT_ID = "admin-cli"
+# ADMIN_CLIENT_SECRET = "admin-secret"
+
+# Optional: expected JWT audience (default: use CLIENT_ID + "account")
+AUDIENCE = "workflow-identity-client"
+# Set to false to skip audience validation (e.g. when token aud/azp format differs)
+AUDIENCE_VALIDATION_ENABLED = true
+
+[development]
+DEBUG = true
+LOG_LEVEL = "DEBUG"
+
+# Development Security Configuration (relaxed for development)
+[development.security]
+ENABLE_HSTS = false
+ENABLE_RATE_LIMITING = false  # Disable in development for easier testing
+RATE_LIMIT_REQUESTS_PER_MINUTE = 1000
+MAX_REQUEST_SIZE_MB = 50  # Larger limit for development
+
+# Development Logging Configuration
+[development.logging]
+SQLALCHEMY_LOG_LEVEL = "WARNING"
+
+# Development Database Configuration
+[development.database]
+POOL_SIZE = 5
+MAX_OVERFLOW = 10
+
+# Development Uvicorn Configuration
+[development.uvicorn]
+WORKERS = 1
+WORKERS_MAX = 2
+
+[production]
+DEBUG = false
+LOG_LEVEL = "DEBUG"
+ENABLE_DOCUMENTATION = false  # Disable documentation in production by default
+ALLOWED_HOSTS = ["your-production-domain.com"]
+
+# Production CORS Configuration
+[production.cors]
+ORIGINS = ["https://your-production-domain.com"]
+ALLOW_CREDENTIALS = true
+ALLOWED_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
+ALLOWED_HEADERS = ["Accept", "Accept-Language", "Content-Language", "Content-Type", "Authorization", "X-Requested-With", "X-Request-ID", "Origin", "Cache-Control", "Pragma", "X-API-Key", "X-System-User", "X-System-Secret"]
+EXPOSED_HEADERS = ["X-Request-ID", "X-Process-Time", "Content-Type", "Content-Length", "X-Estimated-Bytes"]
+MAX_AGE = 3600
+
+# Production Security Configuration
+[production.security]
+ENABLE_HSTS = true
+HSTS_MAX_AGE = 31536000
+HSTS_INCLUDE_SUBDOMAINS = true
+HSTS_PRELOAD = true
+X_FRAME_OPTIONS = "DENY"
+X_XSS_PROTECTION = "1; mode=block"
+REFERRER_POLICY = "strict-origin-when-cross-origin"
+CROSS_ORIGIN_OPENER_POLICY = "same-origin"
+CROSS_ORIGIN_RESOURCE_POLICY = "same-origin"
+ENABLE_RATE_LIMITING = true
+RATE_LIMIT_REQUESTS_PER_MINUTE = 100
+MAX_REQUEST_SIZE_MB = 10
+
+# Production Logging Configuration
+[production.logging]
+SQLALCHEMY_LOG_LEVEL = "WARNING"
+
+# Production Database Configuration
+[production.database]
+POOL_SIZE = 20
+MAX_OVERFLOW = 40
+POOL_RECYCLE = 3600
+POOL_TIMEOUT = 30
+
+# Production Uvicorn Configuration
+[production.uvicorn]
+WORKERS = 4
+WORKERS_MAX = 8
+LIMIT_CONCURRENCY = 2000
+LIMIT_MAX_REQUESTS = 50000
+LIMIT_MAX_REQUESTS_JITTER = 5000
+BACKLOG = 4096
+
+[testing]
+DEBUG = true
+LOG_LEVEL = "DEBUG"
+ENABLE_METRICS = false
+
+# Uvicorn Configuration
+[uvicorn]
+WORKERS = 1
+WORKERS_MAX = 4
+WORKER_CLASS = "uvicorn.workers.UvicornWorker"
+TIMEOUT_KEEP_ALIVE = 5
+LIMIT_CONCURRENCY = 1000
+LIMIT_MAX_REQUESTS = 10000
+LIMIT_MAX_REQUESTS_JITTER = 1000
+BACKLOG = 2048
