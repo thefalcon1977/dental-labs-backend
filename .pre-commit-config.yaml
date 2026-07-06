@@ -26,6 +26,8 @@ repos:
     hooks:
       - id: isort
         args: ['--profile', 'black', '--line-length=88']
+        exclude: ^(tests/|migrations/)
+
 
   # Linting and formatting with ruff (ruff-format is black-compatible; one formatter avoids conflicts)
   - repo: https://github.com/astral-sh/ruff-pre-commit
