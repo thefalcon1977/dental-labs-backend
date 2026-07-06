@@ -9,6 +9,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import ValidationError as PydanticValidationError
 
 from apps.auth.schemas.user import UserInfo
+from apps.auth.utils.jwt_validator import get_jwt_validator
 from apps.core.exceptions import BaseAPIException, UnauthorizedError
 
 StringList: TypeAlias = list[str]
@@ -104,9 +105,6 @@ async def get_current_user(
 ) -> UserInfo:
     """Get the current authenticated user.
 
-    This dependency expects an earlier auth layer to validate the bearer token
-    and place user data on `request.state.current_user` or `request.state.user`.
-
     Args:
         request: FastAPI request object.
         credentials: Optional bearer credentials from the Authorization header.
@@ -121,13 +119,19 @@ async def get_current_user(
         raise UnauthorizedError("Authentication required")
 
     raw_user = _get_state_user(request)
-    if raw_user is None:
-        raise UnauthorizedError("Authentication context unavailable")
+    if raw_user is not None:
+        user = _state_user_to_schema(raw_user)
+        if not user.is_active:
+            raise UnauthorizedError("User account is inactive")
+        return user
 
-    user = _state_user_to_schema(raw_user)
+    validator = get_jwt_validator()
+    payload = await validator.validate_token(credentials.credentials)
+    user = validator.get_user_from_token(payload)
     if not user.is_active:
         raise UnauthorizedError("User account is inactive")
 
+    request.state.current_user = user
     return user
 
 

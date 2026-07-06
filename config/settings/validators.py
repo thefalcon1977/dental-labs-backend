@@ -147,6 +147,20 @@ validators = [
     Validator("redis.SOCKET_CONNECT_TIMEOUT", default=5, cast=int, gte=1),
     Validator("redis.RETRY_ON_TIMEOUT", default=True, cast=bool),
     Validator("redis.MAX_CONNECTIONS", default=50, cast=int, gte=1),
+    # Local Auth Configuration
+    Validator("auth.ALGORITHM", default="HS256", cast=str, is_in=["HS256"]),
+    Validator(
+        "auth.ACCESS_TOKEN_EXPIRE_MINUTES",
+        default=30,
+        cast=int,
+        gte=1,
+        lte=1440,
+    ),
+    Validator("auth.ISSUER", default="dental-labs-backend", cast=str),
+    Validator("auth.AUDIENCE", default="dental-labs-api", cast=str),
+    Validator("auth.PASSWORD_MIN_LENGTH", default=8, cast=int, gte=8, lte=128),
+    Validator("auth.ALLOW_REGISTRATION", default=True, cast=bool),
+    Validator("auth.REQUIRE_EMAIL_VERIFICATION", default=False, cast=bool),
     # Auth OTP (two-step login)
     Validator("auth.OTP_ENABLED", default=False, cast=bool),
     Validator("auth.OTP_SESSION_TTL_SECONDS", default=300, cast=int, gte=60, lte=900),
