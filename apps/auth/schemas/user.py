@@ -41,8 +41,6 @@ class UserUpdate(BaseModel):
 
     email: str | None = Field(default=None, min_length=3, max_length=255)
     username: str | None = Field(default=None, min_length=1, max_length=150)
-    first_name: str | None = Field(default=None, max_length=150)
-    last_name: str | None = Field(default=None, max_length=150)
     is_active: bool | None = None
     is_verified: bool | None = None
     is_superuser: bool | None = None
@@ -90,7 +88,7 @@ class UserInfo(UserResponse):
 
     roles: StringList = Field(default_factory=list)
     groups: StringList = Field(default_factory=list)
-    permissions: StringList = Field(default_factory=list)
+    profile: StringList = Field(default_factory=list)
 
 
 CurrentUser: TypeAlias = UserInfo
