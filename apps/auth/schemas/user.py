@@ -13,8 +13,6 @@ class UserBaseSchema(BaseModel):
 
     email: str = Field(..., min_length=3, max_length=255)
     username: str = Field(..., min_length=1, max_length=150)
-    first_name: str | None = Field(default=None, max_length=150)
-    last_name: str | None = Field(default=None, max_length=150)
 
     @field_validator("email")
     @classmethod
