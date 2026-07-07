@@ -73,11 +73,13 @@ class User(UserBase):
         "Group",
         secondary=user_groups_table,
         back_populates="users",
+        lazy="selectin",
     )
     roles: Mapped[RoleList] = relationship(
         "Role",
         secondary=user_roles_table,
         back_populates="users",
+        lazy="selectin",
     )
     profile: Mapped["Profile | None"] = relationship(
         "Profile",

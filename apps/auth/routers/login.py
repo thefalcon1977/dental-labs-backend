@@ -55,8 +55,8 @@ async def login(
     if not user.is_active:
         raise InactiveUserError()
 
-    roles = [role.name for role in user.roles if role.is_active]
-    groups = [group.name for group in user.groups if group.is_active]
+    roles = [role.name for role in user.roles or [] if role.is_active]
+    groups = [group.name for group in user.groups or [] if group.is_active]
     validator = get_jwt_validator()
     access_token = validator.create_access_token(
         subject=user.id,
