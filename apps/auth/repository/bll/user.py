@@ -41,10 +41,10 @@ async def create_user(
         email=user_data.email,
         username=user_data.username,
         hashed_password=hash_password(user_data.password),
-    )
-    user.profile = models.Profile(
         first_name=user_data.first_name,
         last_name=user_data.last_name,
+    )
+    user.profile = models.Profile(
         display_name=user_data.username,
     )
 
