@@ -71,3 +71,6 @@ Thumbs.db
 # Docker (local overrides)
 docker-compose.override.yml
 .docker/
+
+# Local migrations
+config/migrations/versions/*
