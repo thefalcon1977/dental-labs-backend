@@ -20,6 +20,10 @@ class DetectionResponse(BaseModel):
     model: str = Field(..., description="Checkpoint filename used for detection")
     filename: str = Field(..., description="Original uploaded filename")
     content_type: str = Field(..., description="Detected image media type")
+    confidence_threshold: float = Field(
+        ...,
+        description="Minimum confidence used for this scan, from 0 to 1",
+    )
     detections: list[RegionDetection] = Field(
         ...,
         description="Tissue regions at or above the confidence threshold",

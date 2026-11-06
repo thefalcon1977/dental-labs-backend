@@ -1,6 +1,6 @@
 """Image upload endpoint that runs the local DenseNet checkpoint."""
 
-from fastapi import APIRouter, Depends, File, UploadFile, status
+from fastapi import APIRouter, Depends, File, Query, UploadFile, status
 
 from apps.auth.dependencies import UserInfo, get_current_user
 from apps.common.openapi_responses import RESP_401, RESP_422, RESP_500, RESP_503
@@ -20,7 +20,8 @@ logger = get_logger(__name__)
     description=(
         "Choose an image (JPEG, PNG, GIF, or WEBP). The local DenseNet checkpoint "
         "`resolution_best_densenet_model.pth` scans it for dentin, enamel, and pulp. "
-        "Requires a bearer access token. "
+        "Optional `confidence_threshold` (0 to 1) sets the minimum score; omit it "
+        "to use the server default. Requires a bearer access token. "
         "Time: O(n) sliding windows over the image · Space: O(n)"
     ),
     responses={
@@ -34,12 +35,19 @@ logger = get_logger(__name__)
 )
 async def analyze_image(
     image: UploadFile = File(..., description="Radiograph or dental image to scan"),
+    confidence_threshold: float | None = Query(
+        None,
+        ge=0,
+        le=1,
+        description="Minimum softmax confidence from 0 to 1",
+    ),
     current_user: UserInfo = Depends(get_current_user),
 ) -> schemas.DetectionResponse:
     """Detect tissue regions in one uploaded image.
 
     Args:
         image: Chosen image file.
+        confidence_threshold: Optional cutoff. ``None`` uses the server default.
         current_user: Authenticated user.
 
     Returns:
@@ -55,9 +63,11 @@ async def analyze_image(
         "Detecting tissue regions",
         filename=image.filename,
         size_bytes=len(data),
+        confidence_threshold=confidence_threshold,
         user_id=current_user.id,
     )
     return await services.analyze_image(
         filename=image.filename or "image",
         data=data,
+        confidence_threshold=confidence_threshold,
     )

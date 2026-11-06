@@ -22,12 +22,15 @@ async def analyze_image(
     *,
     filename: str,
     data: bytes,
+    confidence_threshold: float | None = None,
 ) -> DetectionResponse:
     """Validate an uploaded image and detect dentin, enamel, and pulp.
 
     Args:
         filename: Original upload name.
         data: Raw image bytes.
+        confidence_threshold: Minimum softmax confidence from 0 to 1.
+            ``None`` uses the configured server default.
 
     Returns:
         Detection boxes from ``resolution_best_densenet_model.pth``.
@@ -57,8 +60,13 @@ async def analyze_image(
     if not model_path.is_file():
         raise ModelNotFoundError(str(model_path))
 
-    threshold = float(
-        getattr(settings.detection, "CONFIDENCE_THRESHOLD", CONFIDENCE_THRESHOLD)
+    configured = getattr(
+        settings.detection, "CONFIDENCE_THRESHOLD", CONFIDENCE_THRESHOLD
+    )
+    threshold = (
+        float(confidence_threshold)
+        if confidence_threshold is not None
+        else float(configured)
     )
     detections = await asyncio.to_thread(
         scan_image,
@@ -70,6 +78,7 @@ async def analyze_image(
         model=model_path.name,
         filename=filename or "image",
         content_type=content_type,
+        confidence_threshold=threshold,
         detections=[
             RegionDetection(
                 x1=x1,
