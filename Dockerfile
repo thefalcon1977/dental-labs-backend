@@ -59,9 +59,6 @@ RUN python -m pip install --no-cache-dir --upgrade pip && \
     python -m pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt && \
     rm -rf /root/.cache/pip /wheels
 
-# Copy application code
-COPY --chown=appuser:appuser . .
-
 # Copy entrypoint script and make it executable
 COPY --chown=appuser:appuser docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
