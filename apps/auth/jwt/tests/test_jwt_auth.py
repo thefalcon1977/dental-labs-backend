@@ -437,6 +437,40 @@ class TestProfileEndpoints:
         response = await client.get("/auth/me/profile")
         assert response.status_code == 401
 
+    @pytest.mark.asyncio
+    async def test_upload_and_remove_avatar(
+        self,
+        client: AsyncClient,
+        store: FakeUserStore,
+        tmp_path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from apps.auth.jwt.utils import avatars
+
+        monkeypatch.setattr(avatars, "avatar_directory", lambda: tmp_path)
+        headers = await self._auth_header(store)
+        png = b"\x89PNG\r\n\x1a\n" + b"x" * 16
+        uploaded = await client.post(
+            "/auth/me/avatar",
+            headers=headers,
+            files={"file": ("photo.png", png, "image/png")},
+        )
+        assert uploaded.status_code == 200
+        avatar_url = uploaded.json()["avatar_url"]
+        assert "/auth/avatars/" in avatar_url
+        assert avatar_url.endswith(".png") or ".png?" in avatar_url
+
+        filename = avatar_url.rsplit("/", 1)[-1].split("?", 1)[0]
+        image = await client.get(f"/auth/avatars/{filename}")
+        assert image.status_code == 200
+        assert image.content.startswith(b"\x89PNG")
+        assert image.headers["cross-origin-resource-policy"] == "cross-origin"
+
+        removed = await client.delete("/auth/me/avatar", headers=headers)
+        assert removed.status_code == 200
+        assert removed.json()["avatar_url"] is None
+        assert (await client.get(f"/auth/avatars/{filename}")).status_code == 404
+
 
 class TestModeDispatch:
     """Shared ``get_current_user`` picks the provider from ``auth.MODE``."""

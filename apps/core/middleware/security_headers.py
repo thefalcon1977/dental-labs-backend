@@ -108,8 +108,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         coop = getattr(security, "CROSS_ORIGIN_OPENER_POLICY", "same-origin")
         response.headers["Cross-Origin-Opener-Policy"] = coop
 
-        # Cross-Origin-Resource-Policy: Control resource loading
-        corp = getattr(security, "CROSS_ORIGIN_RESOURCE_POLICY", "same-origin")
-        response.headers["Cross-Origin-Resource-Policy"] = corp
+        # Cross-Origin-Resource-Policy: Control resource loading.
+        # A route may opt out, for example a public avatar embedded by the web app.
+        if "Cross-Origin-Resource-Policy" not in response.headers:
+            corp = getattr(security, "CROSS_ORIGIN_RESOURCE_POLICY", "same-origin")
+            response.headers["Cross-Origin-Resource-Policy"] = corp
 
         return response
