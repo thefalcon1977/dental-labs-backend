@@ -202,6 +202,10 @@ validators = [
         len_max=150,
     ),
     Validator("auth.JWT_ADMIN_ROLE", default="admin", cast=str, len_min=1, len_max=100),
+    # Local DenseNet image detection
+    Validator("detection.ENABLED", default=True, cast=bool),
+    Validator("detection.CONFIDENCE_THRESHOLD", default=0.90, cast=float, gte=0, lte=1),
+    Validator("detection.MAX_IMAGE_SIZE_MB", default=10, cast=int, gte=1, lte=50),
     # Security Configuration
     Validator("security.ENABLE_HSTS", default=False, cast=bool),
     Validator("security.HSTS_MAX_AGE", default=31536000, cast=int, gte=0),

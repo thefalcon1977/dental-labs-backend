@@ -24,6 +24,18 @@ This template provides a foundation for building scalable microservices applicat
 
 To get started with this template, contact your development team or see the technical documentation for setup instructions.
 
+## Detection API
+
+`apps/detection` accepts an image and runs the local DenseNet checkpoint `apps/detection/slm/resolution_best_densenet_model.pth`. It returns dentin, enamel, and pulp regions. The checkpoint is gitignored.
+
+```bash
+curl -X POST http://127.0.0.1:8000/detection/images \
+  -H "Authorization: Bearer <access-token>" \
+  -F "image=@tooth.jpg"
+```
+
+See `apps/detection/README.md`.
+
 ## Documentation
 
 For technical details, setup instructions, development guidelines, and API documentation, see:

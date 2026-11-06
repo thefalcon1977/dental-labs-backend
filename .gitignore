@@ -74,3 +74,11 @@ docker-compose.override.yml
 
 # Local migrations
 config/migrations/versions/*
+
+# Model checkpoints
+*.pth
+*.pt
+*.ckpt
+*.onnx
+*.safetensors
+apps/detection/slm/

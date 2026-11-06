@@ -71,7 +71,7 @@ MAX_CONNECTIONS = 50
 [auth]
 ENABLED = true
 # Provider: "sso" = Keycloak (see [keycloak]), "jwt" = local accounts in the service DB
-MODE = "sso"
+MODE = "jwt"
 # Local JWT mode (MODE = "jwt"). Signing key: APP_AUTH__JWT_SECRET_KEY, falls back to SECRET_KEY.
 JWT_ALGORITHM = "HS256"
 JWT_ISSUER = "microservice-fastapi-template"
@@ -117,6 +117,12 @@ ENABLED = false
 AUDIENCE = "workflow-identity-client"
 # Set to false to skip audience validation (e.g. when token aud/azp format differs)
 AUDIENCE_VALIDATION_ENABLED = true
+
+# Local DenseNet checkpoint: apps/detection/slm/resolution_best_densenet_model.pth
+[detection]
+ENABLED = true
+CONFIDENCE_THRESHOLD = 0.90
+MAX_IMAGE_SIZE_MB = 10
 
 [development]
 DEBUG = true
