@@ -1,7 +1,7 @@
 [default]
 
 # Application Settings
-SERVICE_NAME = "dental-labs-backend"
+SERVICE_NAME = "microservice-fastapi-template"
 DEBUG = true
 LOG_LEVEL = "DEBUG"
 ENABLE_METRICS = true
@@ -15,7 +15,7 @@ ALLOWED_HOSTS = ["*"]
 [cors]
 ALLOW_CREDENTIALS = true
 ALLOWED_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
-ALLOWED_HEADERS = ["Accept", "Accept-Language", "Content-Language", "Content-Type", "Authorization", "X-Requested-With", "X-Request-ID", "Origin", "Cache-Control", "Pragma", "X-API-Key", "X-System-User", "X-System-Secret"]
+ALLOWED_HEADERS = ["Accept", "Accept-Language", "Content-Language", "Content-Type", "Authorization", "X-Requested-With", "X-Request-ID", "Origin", "Cache-Control", "Pragma"]
 EXPOSED_HEADERS = ["X-Request-ID", "X-Process-Time", "Content-Type", "Content-Length", "X-Estimated-Bytes"]
 MAX_AGE = 3600
 
@@ -49,7 +49,7 @@ STARTUP_INFO_MODE = "full"
 
 # Database Configuration (Optional)
 [database]
-ENABLED = false
+ENABLED = true
 DRIVER = "postgresql+asyncpg"
 DB_FIRST = true
 POOL_SIZE = 5
@@ -67,15 +67,23 @@ SOCKET_CONNECT_TIMEOUT = 5
 RETRY_ON_TIMEOUT = true
 MAX_CONNECTIONS = 50
 
-# Auth OTP (two-step login) — requires Redis
+# Authentication
 [auth]
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
-ISSUER = "dental-labs-backend"
-AUDIENCE = "dental-labs-api"
-PASSWORD_MIN_LENGTH = 8
-ALLOW_REGISTRATION = true
-REQUIRE_EMAIL_VERIFICATION = false
+ENABLED = true
+# Provider: "sso" = Keycloak (see [keycloak]), "jwt" = local accounts in the service DB
+MODE = "sso"
+# Local JWT mode (MODE = "jwt"). Signing key: APP_AUTH__JWT_SECRET_KEY, falls back to SECRET_KEY.
+JWT_ALGORITHM = "HS256"
+JWT_ISSUER = "microservice-fastapi-template"
+JWT_ACCESS_TOKEN_EXPIRE_MINUTES = 15
+JWT_REFRESH_TOKEN_EXPIRE_DAYS = 7
+JWT_REGISTRATION_ENABLED = true
+JWT_DEFAULT_ROLES = ["user"]
+# Permission required by the /auth admin API (groups, roles, permissions, user access).
+JWT_ADMIN_PERMISSION = "auth:manage"
+# Built-in role holding JWT_ADMIN_PERMISSION; protected from deletion/rename. Granted by `python main.py create-admin`.
+JWT_ADMIN_ROLE = "admin"
+# OTP (two-step login, SSO mode) — requires Redis
 OTP_ENABLED = false
 OTP_SESSION_TTL_SECONDS = 300
 OTP_MAX_ATTEMPTS = 5
@@ -146,7 +154,7 @@ ALLOWED_HOSTS = ["your-production-domain.com"]
 ORIGINS = ["https://your-production-domain.com"]
 ALLOW_CREDENTIALS = true
 ALLOWED_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
-ALLOWED_HEADERS = ["Accept", "Accept-Language", "Content-Language", "Content-Type", "Authorization", "X-Requested-With", "X-Request-ID", "Origin", "Cache-Control", "Pragma", "X-API-Key", "X-System-User", "X-System-Secret"]
+ALLOWED_HEADERS = ["Accept", "Accept-Language", "Content-Language", "Content-Type", "Authorization", "X-Requested-With", "X-Request-ID", "Origin", "Cache-Control", "Pragma"]
 EXPOSED_HEADERS = ["X-Request-ID", "X-Process-Time", "Content-Type", "Content-Length", "X-Estimated-Bytes"]
 MAX_AGE = 3600
 
@@ -164,6 +172,10 @@ CROSS_ORIGIN_RESOURCE_POLICY = "same-origin"
 ENABLE_RATE_LIMITING = true
 RATE_LIMIT_REQUESTS_PER_MINUTE = 100
 MAX_REQUEST_SIZE_MB = 10
+
+# Production Auth Configuration (no open self-registration by default)
+[production.auth]
+JWT_REGISTRATION_ENABLED = false
 
 # Production Logging Configuration
 [production.logging]

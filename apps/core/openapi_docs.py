@@ -11,9 +11,8 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from apps.auth.dependencies.auth import get_current_user
-from apps.auth.dependencies.rbac import require_roles
-from apps.auth.schemas.user import UserInfo
+from apps.auth.dependencies import UserInfo, get_current_user
+from apps.auth.rbac import require_roles
 
 router = APIRouter()
 

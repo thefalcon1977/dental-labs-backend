@@ -285,7 +285,7 @@ async def base_api_exception_handler(
     if exc.status_code >= status.HTTP_500_INTERNAL_SERVER_ERROR:
         log_level = logger.error
 
-    # Extract app name from path (e.g., "/camunda/tickets" -> "camunda")
+    # Extract app name from path (e.g., "/auth/me" -> "auth")
     app_name = None
     path_parts = request.url.path.strip("/").split("/")
     if path_parts and path_parts[0]:

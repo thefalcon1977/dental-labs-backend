@@ -1,0 +1,27 @@
+# MinIO standalone stack for local development.
+# Run from repo root: docker compose -f docker/minio/docker-compose.yml up -d
+# API: http://localhost:9000  |  Console: http://localhost:9001
+#
+# If you change MINIO_PORT / MINIO_CONSOLE_PORT, set MINIO_BROWSER_REDIRECT_URL
+# so the console redirect uses the correct host port (e.g. http://localhost:10224).
+
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+      # So API→console redirect uses the host port (avoids redirect to :9001 when host uses another port)
+      MINIO_BROWSER_REDIRECT_URL: http://localhost:${MINIO_CONSOLE_PORT:-9001}
+    ports:
+      - "${MINIO_PORT:-9000}:9000"   # S3 API
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"  # Web console
+    volumes:
+      - minio_data:/data
+
+volumes:
+  minio_data:
+    driver: local

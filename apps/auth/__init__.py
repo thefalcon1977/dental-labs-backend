@@ -1,1 +1,1 @@
-"""Authentication app for local users, groups, and roles."""
+"""Authentication module for Keycloak JWT integration."""

@@ -2,549 +2,769 @@
 
 ## Overview
 
-The `apps/auth` module provides local user authentication and authorization.
-It owns user identity, password verification, access token creation, current-user
-dependencies, role-based access control (RBAC), and permission checks.
-
-Do not integrate an external identity provider in this app unless explicitly
-approved. Keep authentication logic centered on the local user model and the
-repository/service layers described below.
+The `apps/auth` module provides authentication and authorization functionality using Keycloak JWT tokens. It handles user authentication, token validation, role-based access control (RBAC), and permission checking.
 
 ## Architecture
 
 ### Directory Structure
-
-```text
+```
 apps/auth/
-|-- dependencies/      # FastAPI dependencies for auth/RBAC
-|-- helpers/           # App-specific enums and exceptions
-|-- models/            # SQLAlchemy user and auth-related models
-|-- repository/        # DAL/BLL for user reads and writes
-|-- routers/           # Authentication and user endpoints
-|-- schemas/           # Pydantic request/response schemas
-|-- services/          # Business logic orchestration
-|-- utils/             # Password hashing, token, and security helpers
-`-- tests/             # Unit and integration tests
+├── dependencies/      # FastAPI dependencies for auth/RBAC
+├── helpers/          # App-specific exceptions
+├── routers/          # Authentication endpoints
+├── schemas/          # Pydantic request/response schemas
+├── services/         # Business logic orchestration
+├── utils/            # Keycloak client, JWT validator, token cache
+└── tests/            # Comprehensive test suite
 ```
 
-### Layer Responsibilities
-
-#### Models (`models/`)
-
-- Define SQLAlchemy 2.0 models for users and auth-owned records.
-- All models inherit from `apps.core.db.Base` directly or through an abstract
-  auth base model.
-- Use `Mapped` and `mapped_column` for every field.
-- Keep password fields write-only at API boundaries; never expose
-  `hashed_password` in response schemas.
-
-#### Repository (`repository/`)
-
-- `dal.py`: read-only queries such as `get_user_by_id`,
-  `get_user_by_email`, and paginated user listing.
-- `bll.py`: write operations such as create, update password, activate,
-  deactivate, and delete.
-- DAL returns model instances. BLL returns model instances and owns
-  transactions.
-
-#### Services (`services/`)
-
-- Orchestrate repository calls and auth utilities.
-- Convert models to schemas.
-- Validate credentials and user state.
-- Create access tokens after successful authentication.
-- Do not run raw database queries in services.
+### Component Responsibilities
 
 #### Dependencies (`dependencies/`)
+- **Purpose**: FastAPI dependencies for authentication and authorization
+- **Files**:
+  - `auth.py` - Authentication dependencies (`get_current_user`, `get_optional_user`, `verify_token`)
+  - `rbac.py` - RBAC dependencies (`require_roles`, `require_permissions`, `require_groups`)
+- **Pattern**: All dependencies return `UserInfo` or raise `UnauthorizedError`/`ForbiddenError`
 
-- `auth.py`: current-user dependencies such as `get_current_user` and
-  `get_optional_user`.
-- `rbac.py`: role and permission dependencies such as `require_roles` and
-  `require_permissions`.
-- Dependencies return `UserResponse`/`CurrentUser` schema objects or raise
-  `UnauthorizedError`/`ForbiddenError`.
+#### Services (`services/`)
+- **Purpose**: Business logic orchestration for authentication operations
+- **Files**:
+  - `auth_service.py` - User authentication, token validation, logout
+  - `token_service.py` - Token refresh, introspection, revocation
+- **Pattern**: Services orchestrate utils and convert to schemas
 
 #### Utils (`utils/`)
+- **Purpose**: Low-level utilities for Keycloak integration
+- **Files**:
+  - `jwt_validator.py` - JWT token validation and user extraction
+  - `keycloak_client.py` - HTTP client for Keycloak API
+  - `token_cache.py` - Caching for JWKS and validated tokens
+  - `config_validator.py` - Configuration validation
+- **Pattern**: Utils handle external integrations and caching
 
-- `password.py`: password hashing and verification helpers.
-- `tokens.py`: access token creation and validation helpers.
-- `security.py`: shared security primitives and constants.
-- Utils must not create database sessions or return HTTP responses.
+#### Schemas (`schemas/`)
+- **Purpose**: Pydantic models for requests/responses
+- **Files**:
+  - `token.py` - Token-related schemas (LoginRequest, RefreshTokenRequest, etc.)
+  - `user.py` - User information schemas (UserInfo, UserRoles, UserPermissions)
+- **Pattern**: All schemas use `ConfigDict(from_attributes=True)` for ORM compatibility
 
-## User Base Model
-
-### Required Model Pattern
-
-Create a reusable abstract base model for auth users. Concrete user models
-should inherit from it and define `__tablename__`.
-
-```python
-"""User models for the auth app."""
-
-from datetime import datetime
-from uuid import uuid4
-
-from sqlalchemy import DateTime, String, func
-from sqlalchemy.orm import Mapped, mapped_column
-
-from apps.core.db import Base
-
-
-class UserBase(Base):
-    """Abstract base model for local authenticated users."""
-
-    __abstract__ = True
-
-    id: Mapped[str] = mapped_column(
-        String(36),
-        primary_key=True,
-        default=lambda: str(uuid4()),
-        nullable=False,
-    )
-    email: Mapped[str] = mapped_column(
-        String(255),
-        unique=True,
-        index=True,
-        nullable=False,
-    )
-    username: Mapped[str] = mapped_column(
-        String(150),
-        unique=True,
-        index=True,
-        nullable=False,
-    )
-    hashed_password: Mapped[str] = mapped_column(
-        String(255),
-        nullable=False,
-    )
-    first_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
-    last_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
-    is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
-    is_verified: Mapped[bool] = mapped_column(default=False, nullable=False)
-    is_superuser: Mapped[bool] = mapped_column(default=False, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
-        onupdate=func.now(),
-        nullable=True,
-    )
-
-
-class User(UserBase):
-    """Concrete local user model."""
-
-    __tablename__ = "auth_users"
-```
-
-### Model Rules
-
-- Normalize emails before persistence.
-- Enforce uniqueness with database constraints for `email` and `username`.
-- Store only password hashes, never plaintext passwords.
-- Keep `is_active` checks in authentication flows.
-- Use `is_superuser` only for explicit admin bypass behavior.
-- Add roles/permissions as related models only when the project needs granular
-  authorization beyond basic superuser checks.
-
-## Schemas
-
-### Required Schemas
-
-- `UserCreate`: registration input, including password.
-- `UserUpdate`: optional user profile and state updates.
-- `UserResponse`: public user representation, excluding password fields.
-- `CurrentUser`: user identity used by dependencies and services.
-- `LoginRequest`: email or username plus password.
-- `TokenResponse`: access token and token metadata.
-- `PasswordChangeRequest`: current password plus new password.
-
-### Schema Rules
-
-- Use Pydantic v2.
-- Use `ConfigDict(from_attributes=True)` on response schemas.
-- Never expose `hashed_password`, password reset tokens, or other secrets.
-- Add `Field` descriptions for public request fields.
-- Keep request and response schemas separate.
+#### Routers (`routers/`)
+- **Purpose**: FastAPI route handlers for authentication endpoints
+- **Endpoints**:
+  - `POST /login` - User login
+  - `GET /me` - Get current user
+  - `POST /refresh` - Refresh access token
+  - `POST /logout` - User logout
+- **Pattern**: Routes call services, handle errors, return schemas
 
 ## Authentication Flow
 
 ### Login Flow
-
-```text
-Client -> POST /login (identifier, password)
-    |
-Router -> auth_service.login_user()
-    |
-Service -> DAL get user by email/username
-    |
-Service -> verify password and active status
-    |
-Service -> create access token
-    |
-Return TokenResponse
+```
+Client → POST /login (username, password)
+    ↓
+Router → auth_service.login_user()
+    ↓
+KeycloakClient → Keycloak API (token endpoint)
+    ↓
+Return tokens (access_token, refresh_token)
 ```
 
-### Current User Flow
-
-```text
-Client -> Request with Authorization: Bearer <token>
-    |
-Dependency -> token utility validates token
-    |
-Dependency -> DAL loads user by token subject
-    |
-Dependency -> checks active status
-    |
-Return CurrentUser to route handler
+### Token Validation Flow
+```
+Client → Request with Authorization header
+    ↓
+Dependency (get_current_user) → JWTValidator.validate_token()
+    ↓
+JWTValidator → KeycloakClient.get_jwks() (cached)
+    ↓
+JWTValidator → Validate signature, expiry, issuer, audience
+    ↓
+JWTValidator → Extract user info from payload
+    ↓
+Return UserInfo to route handler
 ```
 
 ### RBAC Flow
-
-```text
-Route Handler -> Depends(require_roles("admin"))
-    |
-RBAC Dependency -> get_current_user()
-    |
-RBAC Dependency -> check user roles/permissions/superuser status
-    |
+```
+Route Handler → Depends(require_roles("admin"))
+    ↓
+RBAC Dependency → get_current_user() (get UserInfo)
+    ↓
+RBAC Dependency → Check roles/permissions/groups
+    ↓
 Raise ForbiddenError if insufficient permissions
-    |
+    ↓
 Route handler executes if authorized
 ```
 
-## Endpoint Standards
+## Key Components
 
-### Required Endpoints
+### JWTValidator (`utils/jwt_validator.py`)
 
-- `POST /register` - Create a local user account.
-- `POST /login` - Authenticate and return an access token.
-- `GET /me` - Return the authenticated user.
-- `PATCH /me` - Update the authenticated user profile.
-- `POST /change-password` - Change password for authenticated user.
-- `POST /logout` - Client-facing logout endpoint when token invalidation is
-  supported.
+#### Responsibilities
+- Extract Bearer token from Authorization header
+- Fetch and cache JWKS from Keycloak
+- Validate JWT signature, expiry, issuer, audience
+- Extract user information from token payload
+- Cache validated tokens to reduce Keycloak calls
 
-### Route Rules
-
-- Every route must include `summary`, `description`, `response_model`, and
-  `status_code`.
-- Every description must include Big O complexity.
-- Document all relevant error responses.
-- Routes call services only. Do not call DAL/BLL directly from routers.
-- Raise typed exceptions instead of returning error responses manually.
-
-### Endpoint Example
-
+#### Usage Pattern
 ```python
-@router.get(
-    "/me",
-    response_model=schemas.UserResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Get current user",
-    description=(
-        "Return the authenticated local user. "
-        "Time: O(1) - Space: O(1)"
-    ),
-    responses={
-        401: {"description": "Authentication required or invalid"},
-        403: {"description": "User account is disabled"},
-    },
-)
-async def get_me(
-    current_user: schemas.CurrentUser = Depends(get_current_user),
-) -> schemas.UserResponse:
-    """Return the current authenticated user."""
-    return schemas.UserResponse.model_validate(current_user)
+from ..utils.jwt_validator import get_jwt_validator
+
+validator = get_jwt_validator()
+token = validator.extract_token(authorization)
+payload = await validator.validate_token(token)
+user = validator.get_user_from_token(payload)
 ```
 
-## Password Handling
+#### Caching
+- **JWKS caching**: Cached with TTL (default: 3600s)
+- **Token validation caching**: Cached validated tokens to avoid re-validation
+- **Cache invalidation**: Tokens invalidated on logout/revocation
 
-### DO
+### KeycloakClient (`utils/keycloak_client.py`)
 
-- Use a strong password hashing algorithm such as Argon2 or bcrypt.
-- Centralize hashing and verification in `utils/password.py`.
-- Validate password length and complexity in schemas or services.
-- Require the current password before password changes.
-- Log password-change events without logging password values.
+#### Responsibilities
+- HTTP client for Keycloak API operations
+- JWKS fetching with caching
+- Token introspection (if enabled)
+- User info retrieval
+- Token refresh and revocation
+- Connection pooling and timeout management
 
-### DON'T
-
-- Don't store plaintext passwords.
-- Don't log passwords, password hashes, or reset tokens.
-- Don't compare password hashes manually in services.
-- Don't expose whether an email exists during login failures.
-
-## Token Handling
-
-### DO
-
-- Use short-lived access tokens.
-- Store the user ID in the token subject.
-- Validate token signature, expiry, and expected algorithm.
-- Keep token settings in `config/settings/`.
-- Use environment variables for secrets.
-
-### DON'T
-
-- Don't hardcode token secrets.
-- Don't log access tokens.
-- Don't put sensitive PII in token payloads.
-- Don't trust token payloads without loading and validating the user from the
-  database when account state matters.
-
-## Repository Patterns
-
-### DAL Examples
-
+#### Usage Pattern
 ```python
-async def get_user_by_email(
-    db: AsyncSession,
-    email: str,
-) -> models.User | None:
-    """Get a user by normalized email."""
-    result = await db.execute(
-        select(models.User).where(models.User.email == email)
-    )
-    return result.scalar_one_or_none()
+from ..utils.keycloak_client import get_keycloak_client
+
+client = get_keycloak_client()
+jwks = await client.get_jwks()
+user_info = await client.get_user_info(token)
 ```
 
-### BLL Examples
+#### Configuration
+- Connection pooling: `HTTP_MAX_CONNECTIONS`, `HTTP_MAX_KEEPALIVE_CONNECTIONS`
+- Timeouts: `HTTP_TIMEOUT`, `HTTP_CONNECT_TIMEOUT`
+- Background refresh: `JWKS_BACKGROUND_REFRESH`, `JWKS_REFRESH_THRESHOLD`
 
+### Authentication Dependencies (`dependencies/auth.py`)
+
+#### get_current_user
+- **Purpose**: Extract and validate user from JWT token
+- **Returns**: `UserInfo` object
+- **Raises**: `UnauthorizedError` if token invalid/missing
+- **Usage**:
+  ```python
+  @router.get("/protected")
+  async def protected_endpoint(
+      current_user: UserInfo = Depends(get_current_user),
+  ):
+      return {"user_id": current_user.id}
+  ```
+
+#### get_optional_user
+- **Purpose**: Get user if authenticated, None otherwise
+- **Returns**: `UserInfo | None`
+- **Usage**: For endpoints that work with or without authentication
+  ```python
+  @router.get("/public")
+  async def public_endpoint(
+      user: UserInfo | None = Depends(get_optional_user),
+  ):
+      if user:
+          return {"authenticated": True, "user_id": user.id}
+      return {"authenticated": False}
+  ```
+
+#### verify_token
+- **Purpose**: Verify token without extracting user info
+- **Returns**: `bool`
+- **Usage**: For endpoints that only need token validation
+  ```python
+  @router.post("/verify")
+  async def verify_endpoint(
+      _: bool = Depends(verify_token),
+  ):
+      return {"verified": True}
+  ```
+
+### RBAC Dependencies (`dependencies/rbac.py`)
+
+#### Role-Based Access Control
+- **require_roles(*roles)**: User must have at least one role
+- **require_all_roles(*roles)**: User must have all roles
+- **require_permissions(*perms)**: User must have at least one permission
+- **require_all_permissions(*perms)**: User must have all permissions
+- **require_groups(*groups)**: User must be in at least one group
+- **require_all_groups(*groups)**: User must be in all groups
+
+#### Usage Pattern
 ```python
+@router.get("/admin")
+async def admin_endpoint(
+    user: UserInfo = Depends(get_current_user),
+    _: None = Depends(require_roles("admin", "super_admin")),
+):
+    return {"message": "Admin access"}
+
+@router.post("/users")
 async def create_user(
-    db: AsyncSession,
-    user_data: schemas.UserCreate,
-) -> models.User:
-    """Create a local user in a transaction."""
-    existing_user = await dal.get_user_by_email(db, user_data.email)
-    if existing_user:
-        raise UserAlreadyExistsError(email=user_data.email)
-
-    user = models.User(
-        email=normalize_email(user_data.email),
-        username=user_data.username,
-        hashed_password=hash_password(user_data.password),
-    )
-    db.add(user)
-    await db.commit()
-    await db.refresh(user)
-    return user
+    user: UserInfo = Depends(get_current_user),
+    _: None = Depends(require_permissions("users:write", "users:create")),
+):
+    return {"message": "User created"}
 ```
 
-## Exceptions
+#### Role/Permission Sources
+- **Realm roles**: From `realm_access.roles` in JWT
+- **Client roles**: From `resource_access.{client_id}.roles` in JWT
+- **Permissions**: From `authorization.permissions` or `scope` in JWT
+- **Groups**: From `groups` claim in JWT
 
-### Exception Hierarchy
+## Security Best Practices
 
-Define app-specific exceptions in `apps/auth/helpers/exceptions.py`.
-All exceptions must inherit from `BaseAPIException`.
+### ✅ DO
 
-- `AuthError` - Base auth exception.
-- `InvalidCredentialsError` (401) - Login failed.
-- `InactiveUserError` (403) - User account is inactive.
-- `UserNotFoundError` (404) - User not found.
-- `UserAlreadyExistsError` (409) - Email or username already exists.
-- `InvalidTokenError` (401) - Token is invalid or malformed.
-- `TokenExpiredError` (401) - Token has expired.
-- `InsufficientPermissionsError` (403) - User lacks required permission.
+#### Token Handling
+- ✅ **Always validate tokens** - Never trust tokens without validation
+- ✅ **Use HTTPS** - Always use HTTPS in production for token transmission
+- ✅ **Validate audience** - Ensure token audience matches configured client
+- ✅ **Check token expiry** - Always validate `exp` claim
+- ✅ **Validate issuer** - Ensure token issuer matches Keycloak realm
+- ✅ **Cache JWKS** - Cache JWKS to reduce Keycloak load
+- ✅ **Invalidate on logout** - Always invalidate tokens on logout
 
-### Error Rules
+#### Error Handling
+- ✅ **Don't expose internals** - Generic error messages for auth failures
+- ✅ **Log security events** - Log authentication failures, authorization denials
+- ✅ **Rate limit auth endpoints** - Prevent brute force attacks
+- ✅ **Use appropriate status codes** - 401 for auth, 403 for authorization
 
-- Use generic messages for credential failures.
-- Include stable IDs in `details`, not secrets or PII.
-- Roll back transactions after database errors in BLL.
-- Do not return `ORJSONResponse` manually from routers for errors.
+#### Configuration
+- ✅ **Use environment variables** - Never hardcode secrets
+- ✅ **Validate configuration** - Use config validators
+- ✅ **Secure client secrets** - Store client secrets securely
+- ✅ **Set appropriate timeouts** - Configure HTTP timeouts for Keycloak
+
+#### Caching
+- ✅ **Cache JWKS** - Reduce Keycloak load with JWKS caching
+- ✅ **Cache validated tokens** - Cache token validation results
+- ✅ **Set appropriate TTL** - Balance freshness vs performance
+- ✅ **Invalidate on revocation** - Clear cache on token revocation
+
+### ❌ DON'T
+
+#### Security Anti-Patterns
+- ❌ **Don't skip token validation** - Always validate tokens
+- ❌ **Don't log tokens** - Never log access tokens or refresh tokens
+- ❌ **Don't expose user details in errors** - Generic error messages
+- ❌ **Don't trust client claims** - Always validate with Keycloak
+- ❌ **Don't cache sensitive data** - Don't cache passwords or secrets
+- ❌ **Don't use weak algorithms** - Use RS256, not HS256
+- ❌ **Don't skip audience validation** - Always validate audience
+
+#### Code Anti-Patterns
+- ❌ **Don't bypass dependencies** - Always use `get_current_user` for auth
+- ❌ **Don't duplicate validation logic** - Use centralized JWTValidator
+- ❌ **Don't create sessions manually** - Use Keycloak for session management
+- ❌ **Don't store tokens in cookies** - Use Authorization header
+- ❌ **Don't expose internal errors** - Generic error messages
+
+## Development Patterns
+
+### Adding New Authentication Endpoint
+
+#### Pattern
+```python
+from fastapi import APIRouter, Depends, status
+from ..dependencies.auth import get_current_user
+from ..schemas.user import UserInfo
+
+router = APIRouter()
+
+@router.get(
+    "/endpoint",
+    response_model=ResponseSchema,
+    status_code=status.HTTP_200_OK,
+    summary="Endpoint description",
+)
+async def endpoint(
+    current_user: UserInfo = Depends(get_current_user),
+) -> ResponseSchema:
+    """Endpoint with authentication."""
+    # Use current_user.id, current_user.username, etc.
+    return ResponseSchema(...)
+```
+
+### Adding RBAC to Endpoint
+
+#### Pattern
+```python
+from ..dependencies.auth import get_current_user
+from ..dependencies.rbac import require_roles
+
+@router.post(
+    "/admin-only",
+    response_model=ResponseSchema,
+    status_code=status.HTTP_201_CREATED,
+)
+async def admin_endpoint(
+    current_user: UserInfo = Depends(get_current_user),
+    _: None = Depends(require_roles("admin")),
+) -> ResponseSchema:
+    """Admin-only endpoint."""
+    return ResponseSchema(...)
+```
+
+### Adding Permission Check
+
+#### Pattern
+```python
+from ..dependencies.rbac import require_permissions
+
+@router.post(
+    "/resource",
+    response_model=ResponseSchema,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_resource(
+    current_user: UserInfo = Depends(get_current_user),
+    _: None = Depends(require_permissions("resources:write")),
+) -> ResponseSchema:
+    """Create resource with permission check."""
+    return ResponseSchema(...)
+```
+
+### Custom RBAC Logic
+
+#### Pattern
+```python
+from fastapi import Depends
+from apps.core.exceptions import ForbiddenError
+from ..dependencies.auth import get_current_user
+from ..schemas.user import UserInfo
+
+async def require_custom_permission(
+    user: UserInfo = Depends(get_current_user),
+) -> None:
+    """Custom permission check."""
+    # Custom logic here
+    if not has_custom_permission(user):
+        raise ForbiddenError("Insufficient permissions")
+```
+
+## Exception Handling
+
+### Auth App Exceptions
+
+#### Exception Hierarchy
+- `TokenExpiredError` (401) - Token has expired
+- `InvalidTokenError` (401) - Token is invalid or malformed
+- `TokenRevokedError` (401) - Token has been revoked
+- `InsufficientPermissionsError` (403) - User lacks required permissions
+- `KeycloakConnectionError` (503) - Cannot connect to Keycloak
+
+#### Usage Pattern
+```python
+from ..helpers.exceptions import InvalidTokenError, TokenExpiredError
+
+try:
+    payload = await validator.validate_token(token)
+except TokenExpiredError:
+    # Handle expired token
+    raise
+except InvalidTokenError:
+    # Handle invalid token
+    raise
+```
+
+### Error Response Format
+All exceptions follow `BaseAPIException` pattern:
+```json
+{
+  "error": {
+    "message": "Token has expired",
+    "type": "TokenExpiredError",
+    "details": {}
+  }
+}
+```
 
 ## Configuration
 
 ### Required Settings
-
-- `auth.SECRET_KEY` - Token signing secret.
-- `auth.ACCESS_TOKEN_EXPIRE_MINUTES` - Access token lifetime.
-- `auth.ALGORITHM` - Token signing algorithm.
-- `auth.PASSWORD_MIN_LENGTH` - Minimum password length.
+- `keycloak.SERVER_URL` - Keycloak server URL
+- `keycloak.REALM` - Keycloak realm name
+- `keycloak.CLIENT_ID` - Client ID for authentication
+- `keycloak.CLIENT_SECRET` - Client secret (if required)
 
 ### Optional Settings
+- `keycloak.AUDIENCE` - Expected token audience
+- `keycloak.ALGORITHMS` - JWT algorithms (default: ["RS256"])
+- `keycloak.TOKEN_INTROSPECTION_ENABLED` - Enable token introspection
+- `keycloak.TOKEN_CACHE_ENABLED` - Enable token validation caching
+- `keycloak.TOKEN_CACHE_TTL` - Token cache TTL (default: 300s)
+- `keycloak.PUBLIC_KEY_CACHE_TTL` - JWKS cache TTL (default: 3600s)
+- `keycloak.JWKS_BACKGROUND_REFRESH` - Enable background JWKS refresh
+- `keycloak.USE_REDIS_CACHE` - Use Redis for distributed caching
 
-- `auth.ISSUER` - Token issuer value.
-- `auth.AUDIENCE` - Token audience value.
-- `auth.ALLOW_REGISTRATION` - Enable public registration.
-- `auth.REQUIRE_EMAIL_VERIFICATION` - Require verified email before login.
-- `auth.LOGIN_RATE_LIMIT_ENABLED` - Enable brute-force protection when
-  middleware supports it.
+### Configuration Validation
+Use `utils/config_validator.py` to validate configuration:
+```python
+from ..utils.config_validator import validate_keycloak_config
 
-### Configuration Rules
-
-- Add defaults only when safe.
-- Add validators for required secrets and bounded numeric values.
-- Never commit real secrets in settings files.
-
-## Security Best Practices
-
-### DO
-
-- Validate all request bodies with schemas.
-- Normalize email addresses before lookup and persistence.
-- Return the same login error for unknown users and wrong passwords.
-- Log authentication successes and failures with stable identifiers only.
-- Use 401 for missing/invalid authentication.
-- Use 403 for authenticated users without permission.
-- Protect write endpoints with `get_current_user`.
-- Add database uniqueness constraints for identity fields.
-
-### DON'T
-
-- Don't expose internal auth errors to clients.
-- Don't log tokens, passwords, hashes, cookies, or authorization headers.
-- Don't bypass service/repository layers.
-- Don't put business logic in routers.
-- Don't use blocking I/O in async routes/services.
-- Don't create database sessions manually.
+validate_keycloak_config()
+```
 
 ## Testing Patterns
 
-### Required Tests
+### Testing Authentication
 
-- Register user success and duplicate-user conflict.
-- Login success.
-- Login failure with wrong password.
-- Login failure with unknown user.
-- Inactive user cannot log in.
-- Current-user dependency with valid token.
-- Current-user dependency with expired/invalid token.
-- RBAC success and failure.
-- Password change success and failure.
+#### Test Current User Dependency
+```python
+import pytest
+from httpx import AsyncClient
+from ..dependencies.auth import get_current_user
+from ..schemas.user import UserInfo
 
-### Test Example
+@pytest.mark.asyncio
+async def test_get_current_user_valid_token(client: AsyncClient):
+    """Test get_current_user with valid token."""
+    # Create test token
+    token = create_test_token()
 
+    response = await client.get(
+        "/auth/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["id"] == "user_123"
+```
+
+#### Test Invalid Token
 ```python
 @pytest.mark.asyncio
-async def test_login_invalid_credentials(client: AsyncClient) -> None:
-    """Invalid credentials return a generic unauthorized error."""
-    response = await client.post(
-        "/auth/login",
-        json={"identifier": "missing@example.com", "password": "wrong"},
+async def test_get_current_user_invalid_token(client: AsyncClient):
+    """Test get_current_user with invalid token."""
+    response = await client.get(
+        "/auth/me",
+        headers={"Authorization": "Bearer invalid_token"},
     )
-
     assert response.status_code == 401
-    assert response.json()["error"]["type"] == "InvalidCredentialsError"
+    assert "error" in response.json()
+```
+
+### Testing RBAC
+
+#### Test Role Requirement
+```python
+@pytest.mark.asyncio
+async def test_require_roles_success(client: AsyncClient):
+    """Test require_roles with user having required role."""
+    token = create_test_token(roles=["admin"])
+
+    response = await client.get(
+        "/admin",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+```
+
+#### Test Insufficient Roles
+```python
+@pytest.mark.asyncio
+async def test_require_roles_failure(client: AsyncClient):
+    """Test require_roles with user missing required role."""
+    token = create_test_token(roles=["user"])
+
+    response = await client.get(
+        "/admin",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+```
+
+### Testing Services
+
+#### Test Auth Service
+```python
+from ..services import auth_service
+
+@pytest.mark.asyncio
+async def test_login_user_success():
+    """Test successful user login."""
+    token_data = await auth_service.login_user(
+        username="test_user",
+        password="test_password",
+    )
+    assert "access_token" in token_data
+    assert "refresh_token" in token_data
+```
+
+### Testing Utils
+
+#### Test JWT Validator
+```python
+from ..utils.jwt_validator import get_jwt_validator
+
+@pytest.mark.asyncio
+async def test_validate_token_success():
+    """Test successful token validation."""
+    validator = get_jwt_validator()
+    token = create_test_token()
+
+    payload = await validator.validate_token(token)
+    assert payload["sub"] == "user_123"
 ```
 
 ## Integration Patterns
 
 ### Using Auth in Other Apps
 
+#### Import Dependencies
 ```python
+# In other app's router
 from apps.auth.dependencies.auth import get_current_user
-from apps.auth.schemas.user import CurrentUser
+from apps.auth.dependencies.rbac import require_roles
+from apps.auth.schemas.user import UserInfo
 
-
-@router.post(
-    "/resources",
-    response_model=schemas.ResourceResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Create resource",
-    description="Create a resource for the current user. Time: O(1) - Space: O(1)",
-)
-async def create_resource(
-    resource_data: schemas.ResourceCreate,
-    current_user: CurrentUser = Depends(get_current_user),
-) -> schemas.ResourceResponse:
-    """Create a resource with authenticated user context."""
-    return await services.create_resource(resource_data, current_user)
+@router.get("/protected")
+async def protected_endpoint(
+    current_user: UserInfo = Depends(get_current_user),
+) -> ResponseSchema:
+    """Protected endpoint using auth app."""
+    return ResponseSchema(user_id=current_user.id)
 ```
 
-### Passing User Context to Services
+#### Use RBAC
+```python
+from apps.auth.dependencies.rbac import require_permissions
 
-- Pass `CurrentUser` from router to service when user context is required.
-- Services may use `current_user.id` for ownership/audit fields.
-- Services should not read `Request` unless truly needed.
+@router.post("/resource")
+async def create_resource(
+    current_user: UserInfo = Depends(get_current_user),
+    _: None = Depends(require_permissions("resources:write")),
+) -> ResponseSchema:
+    """Create resource with permission check."""
+    return ResponseSchema(...)
+```
+
+### Accessing User Info in Services
+
+#### Pattern
+```python
+# In service layer
+from apps.auth.schemas.user import UserInfo
+
+async def create_resource(
+    db: AsyncSession,
+    resource_data: ResourceCreate,
+    current_user: UserInfo,  # Passed from router
+) -> ResourceResponse:
+    """Create resource with user context."""
+    resource = models.Resource(
+        **resource_data.model_dump(),
+        created_by=current_user.id,
+    )
+    # ... create resource
+    return ResourceResponse.model_validate(resource)
+```
 
 ## Logging Patterns
 
-### Success Logging
+### Authentication Logging
 
+#### Success Logging
 ```python
 logger.info(
     "User authenticated",
     user_id=user.id,
     username=user.username,
+    client_id=user.client_id,
+    client_ip=request.client.host,
 )
 ```
 
-### Failure Logging
-
+#### Failure Logging
 ```python
 logger.warning(
-    "Authentication failed",
-    identifier_hash=hash_identifier(login_data.identifier),
-    reason="invalid_credentials",
+    "Authentication failed: invalid token",
+    error=str(e),
+    client_ip=request.client.host,
 )
 ```
 
-### Authorization Logging
-
+#### Authorization Logging
 ```python
 logger.warning(
-    "Access denied",
+    "Access denied: insufficient roles",
     user_id=user.id,
+    username=user.username,
+    user_roles=list(all_roles),
     required_roles=list(required_roles),
+    missing_roles=list(missing_roles),
 )
 ```
+
+### Security Event Logging
+- ✅ Log authentication successes and failures
+- ✅ Log authorization denials with context
+- ✅ Log token validation failures
+- ✅ Log Keycloak connection errors
+- ❌ Don't log tokens or passwords
+- ❌ Don't log sensitive user data
 
 ## Performance Considerations
 
-- User lookup by `id`, `email`, and `username` must use indexed columns.
-- List endpoints must use SQL-level pagination.
-- Password verification is intentionally expensive; keep it out of loops.
-- Avoid N+1 relationship loading for role/permission checks.
-- Keep login and current-user dependencies async end to end.
+### Caching Strategy
+- **JWKS caching**: Cache JWKS for 1 hour (configurable)
+- **Token validation caching**: Cache validated tokens (default: 5 minutes)
+- **Background refresh**: Refresh JWKS in background before expiry
+- **Redis fallback**: Use Redis for distributed caching if available
+
+### Connection Pooling
+- **HTTP client**: Use connection pooling for Keycloak requests
+- **Max connections**: Configure `HTTP_MAX_CONNECTIONS`
+- **Keepalive**: Configure `HTTP_MAX_KEEPALIVE_CONNECTIONS`
+- **Timeouts**: Set appropriate timeouts to prevent hanging
+
+### Token Validation Optimization
+- **Cache validated tokens**: Avoid re-validating same token
+- **JWKS caching**: Reduce Keycloak JWKS fetches
+- **Background refresh**: Refresh JWKS before expiry
+- **Token introspection**: Only if required (adds latency)
+
+## Common Patterns
+
+### Optional Authentication
+```python
+from ..dependencies.auth import get_optional_user
+
+@router.get("/public-or-private")
+async def flexible_endpoint(
+    user: UserInfo | None = Depends(get_optional_user),
+) -> ResponseSchema:
+    """Endpoint that works with or without auth."""
+    if user:
+        return ResponseSchema(authenticated=True, user_id=user.id)
+    return ResponseSchema(authenticated=False)
+```
+
+### Multiple Role Requirements
+```python
+from ..dependencies.rbac import require_all_roles
+
+@router.get("/super-admin")
+async def super_admin_endpoint(
+    user: UserInfo = Depends(get_current_user),
+    _: None = Depends(require_all_roles("admin", "super_admin")),
+) -> ResponseSchema:
+    """Requires both admin and super_admin roles."""
+    return ResponseSchema(...)
+```
+
+### Permission-Based Access
+```python
+from ..dependencies.rbac import require_all_permissions
+
+@router.post("/critical-operation")
+async def critical_operation(
+    user: UserInfo = Depends(get_current_user),
+    _: None = Depends(require_all_permissions("write", "critical")),
+) -> ResponseSchema:
+    """Requires both write and critical permissions."""
+    return ResponseSchema(...)
+```
+
+## Best Practices Summary
+
+### ✅ DO
+- ✅ Always use `get_current_user` dependency for authentication
+- ✅ Use RBAC dependencies for authorization checks
+- ✅ Validate tokens before trusting them
+- ✅ Cache JWKS and validated tokens
+- ✅ Log authentication and authorization events
+- ✅ Use appropriate HTTP status codes (401, 403)
+- ✅ Handle Keycloak connection errors gracefully
+- ✅ Use connection pooling for Keycloak requests
+- ✅ Set appropriate timeouts
+- ✅ Invalidate tokens on logout
+- ✅ Use environment variables for configuration
+- ✅ Test authentication and authorization flows
+
+### ❌ DON'T
+- ❌ Don't skip token validation
+- ❌ Don't log tokens or passwords
+- ❌ Don't expose internal errors to clients
+- ❌ Don't bypass authentication dependencies
+- ❌ Don't duplicate validation logic
+- ❌ Don't trust client claims without validation
+- ❌ Don't cache sensitive data
+- ❌ Don't use weak JWT algorithms
+- ❌ Don't skip audience validation
+- ❌ Don't create sessions manually
+- ❌ Don't store tokens in cookies
+- ❌ Don't hardcode secrets
 
 ## Migration and Updates
 
-### Adding New User Fields
+### Adding New RBAC Dependency
+1. Add function to `dependencies/rbac.py`
+2. Follow existing pattern (check roles/permissions/groups)
+3. Log authorization denials
+4. Raise `ForbiddenError` or `InsufficientPermissionsError`
+5. Add tests for new dependency
+6. Document usage in docstring
 
-1. Add the field to the model with type hints.
-2. Add an Alembic migration.
-3. Update request/response schemas only when the field belongs in the API.
-4. Add validators when the field accepts user input.
-5. Add tests for creation, update, and serialization behavior.
+### Adding New Authentication Endpoint
+1. Add route to `routers/router.py`
+2. Use appropriate HTTP method and status code
+3. Define request/response schemas
+4. Call service layer for business logic
+5. Handle errors appropriately
+6. Add tests for endpoint
 
-### Adding RBAC
-
-1. Add role/permission models or enum values.
-2. Add DAL queries with eager loading where needed.
-3. Add RBAC dependency functions.
-4. Add 403 error docs to protected endpoints.
-5. Add success and failure tests.
+### Updating Token Validation
+1. Update `JWTValidator` in `utils/jwt_validator.py`
+2. Maintain backward compatibility
+3. Update cache invalidation if needed
+4. Add tests for new validation logic
+5. Update documentation
 
 ## Troubleshooting
 
-### Login Fails
+### Common Issues
 
-- Check user exists by normalized email/username.
-- Check user is active.
-- Check password hash verification.
-- Check token secret and algorithm configuration.
+#### Token Validation Fails
+- **Check**: Token format, expiry, issuer, audience
+- **Check**: JWKS availability and caching
+- **Check**: Keycloak connection
+- **Solution**: Verify configuration, check Keycloak logs
 
-### Current User Fails
+#### Authorization Denied
+- **Check**: User roles/permissions in token
+- **Check**: Required roles/permissions in dependency
+- **Check**: Token claims extraction
+- **Solution**: Verify Keycloak user configuration
 
-- Check Authorization header format.
-- Check token expiry.
-- Check token subject maps to an active user.
-- Check database connectivity.
+#### Keycloak Connection Errors
+- **Check**: Server URL, realm, client configuration
+- **Check**: Network connectivity
+- **Check**: Timeout settings
+- **Solution**: Verify Keycloak availability, adjust timeouts
 
-### Authorization Denied
-
-- Check required roles or permissions.
-- Check user assigned roles/permissions.
-- Check dependency ordering on the endpoint.
+#### Cache Issues
+- **Check**: Cache TTL settings
+- **Check**: Redis connection (if using)
+- **Check**: Cache invalidation on logout
+- **Solution**: Verify cache configuration, check Redis logs
 
 ## References
 
+- Keycloak Documentation: https://www.keycloak.org/documentation
 - JWT Specification: https://tools.ietf.org/html/rfc7519
 - FastAPI Dependencies: https://fastapi.tiangolo.com/tutorial/dependencies/
 - Project Architecture: See `.cursor/rules/architecture.mdc`

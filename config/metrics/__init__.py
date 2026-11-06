@@ -12,6 +12,7 @@ from prometheus_client import REGISTRY, generate_latest
 
 from config.metrics.database import *  # noqa: F403, F401
 from config.metrics.http import *  # noqa: F403, F401
+from config.metrics.keycloak import *  # noqa: F403, F401
 from config.metrics.middleware import PrometheusMiddleware
 from config.metrics.service import service_info, setup_service_info
 from config.metrics.system import *  # noqa: F403, F401

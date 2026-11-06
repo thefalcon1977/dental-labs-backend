@@ -1,0 +1,414 @@
+# Cursor Rules for Common App
+
+## App Overview
+The `apps/common` app provides system-level endpoints for health checks, liveness, readiness, version information, and metrics. This app is special because:
+- It's mounted at the root level (no `/common` prefix)
+- It has no database models or repository layer
+- It provides infrastructure endpoints used by Kubernetes, monitoring, and operations teams
+- Services directly call core utilities (no BLL/DAL separation needed)
+
+## Directory Structure
+
+```
+apps/common/
+├── __init__.py
+├── types.py              # Type aliases for common module
+├── routers/
+│   ├── __init__.py       # Only exports
+│   └── router.py         # Route handlers
+├── schemas/
+│   ├── __init__.py       # Only exports
+│   └── schema.py         # Pydantic response schemas
+└── services/
+    ├── __init__.py       # Only exports
+    └── common_service.py # Business logic functions
+```
+
+## Architecture Patterns
+
+### No Repository Layer
+- **This app does NOT have a repository layer** (no `repository/` directory)
+- Services directly call core utilities (e.g., `apps.core.db.check_db_health`)
+- This is acceptable because these are simple utility functions, not complex business logic
+- No database models needed - this app doesn't manage data
+
+### Service Layer
+- Services are simple utility functions
+- They orchestrate health checks and configuration gathering
+- Services receive `Request` object when they need app state
+- Services return typed dictionaries or tuples (using type aliases)
+
+### Router Layer
+- Routers are mounted at root level (no prefix)
+- Endpoints: `/`, `/health`, `/live`, `/ready`, `/version`, `/metrics`
+- Some endpoints are conditional:
+  - `/metrics` - only if `settings.ENABLE_METRICS` is True
+  - `/health/db`, `/health/cache` - only if `settings.DEBUG` is True
+- Use `ORJSONResponse` for all JSON responses
+- Use `Response` (from fastapi.responses) only for Prometheus metrics (text/plain)
+
+## Type Aliases
+
+### Location
+- All type aliases are in `apps/common/types.py`
+- Use type aliases for all `dict[...]` and `tuple[...]` return types
+- Never use inline patterns like `dict[str, Any]` in function signatures
+
+### Available Type Aliases
+```python
+# Dictionary type aliases
+ResponseDict: TypeAlias = dict[str, Any]
+EndpointDict: TypeAlias = dict[str, str]
+ChecksDict: TypeAlias = dict[str, Any]
+DbInfoDict: TypeAlias = dict[str, Any]
+CacheInfoDict: TypeAlias = dict[str, Any]
+
+# Tuple type aliases
+ReadinessResult: TypeAlias = tuple[ChecksDict, bool]
+DbHealthResult: TypeAlias = tuple[bool, DbInfoDict]
+```
+
+### Usage Example
+```python
+from ..types import EndpointDict, ReadinessResult
+
+def get_available_endpoints() -> EndpointDict:
+    """Get available endpoints."""
+    endpoints: EndpointDict = {...}
+    return endpoints
+
+async def check_readiness(request: Request) -> ReadinessResult:
+    """Check service readiness."""
+    checks: ChecksDict = {}
+    all_ready = True
+    return checks, all_ready
+```
+
+## Schemas
+
+### Schema Location
+- All schemas are in `apps/common/schemas/schema.py`
+- Export from `schemas/__init__.py`
+
+### Available Schemas
+- `HealthResponse` - Health check response
+- `LiveResponse` - Liveness probe response
+- `ReadyResponse` - Readiness probe response (includes checks dict)
+- `VersionResponse` - Version information response
+- `RootResponse` - Root endpoint response
+
+### Schema Patterns
+- All schemas use `ConfigDict(from_attributes=True)`
+- Use `dict[str, Any]` in Pydantic models is acceptable (not function signatures)
+- Example:
+  ```python
+  class ReadyResponse(BaseModel):
+      model_config = ConfigDict(from_attributes=True)
+      status: str
+      checks: dict[str, Any]  # OK in Pydantic models
+  ```
+
+## Services
+
+### Service Functions
+- Services are in `apps/common/services/common_service.py`
+- Export from `services/__init__.py`
+- Functions are simple utility functions (no complex business logic)
+
+### Available Services
+- `check_readiness(request: Request) -> ReadinessResult` - Check all dependencies
+- `get_db_health_status(request: Request) -> DbHealthResult` - Get DB health
+- `get_cache_info() -> CacheInfoDict` - Get cache configuration
+- `get_available_endpoints() -> EndpointDict` - Get available endpoints list
+
+### Service Patterns
+- Services receive `Request` when they need app state (e.g., `request.app.state.db_manager`)
+- Services use type aliases for all return types
+- Services call core utilities directly (no repository layer)
+- Example:
+  ```python
+  from apps.core.db import check_db_health
+  from ..types import ReadinessResult, ChecksDict
+
+  async def check_readiness(request: Request) -> ReadinessResult:
+      checks: ChecksDict = {}
+      db_ready = await check_db_health(request.app)
+      checks["database"] = db_ready
+      return checks, all_ready
+  ```
+
+## Routers
+
+### Router Location
+- Router is in `apps/common/routers/router.py`
+- Export from `routers/__init__.py`
+- Router is mounted at root level (no prefix)
+
+### Endpoint Patterns
+
+#### Standard Endpoints
+- `GET /` - Root endpoint (returns available endpoints)
+- `GET /health` - Health check (always returns 200)
+- `GET /live` - Liveness probe (always returns 200)
+- `GET /ready` - Readiness probe (200 if ready, 503 if not)
+- `GET /version` - Version information
+
+#### Conditional Endpoints
+- `GET /metrics` - Prometheus metrics (only if `settings.ENABLE_METRICS`)
+- `GET /health/db` - Database health check (only if `settings.DEBUG`)
+- `GET /health/cache` - Cache health check (only if `settings.DEBUG`)
+
+### Router Patterns
+- Use `ORJSONResponse` for all JSON responses
+- Use `Response` only for Prometheus metrics (text/plain)
+- Always use proper response models
+- Use conditional registration for optional endpoints:
+  ```python
+  if settings.ENABLE_METRICS:
+      @router.get("/metrics", response_class=Response)
+      async def metrics() -> Response:
+          ...
+
+  if settings.DEBUG:
+      @router.get("/health/db")
+      async def health_db(request: Request) -> ORJSONResponse:
+          ...
+  ```
+
+## Health Check Patterns
+
+### Readiness Check
+- Checks all dependencies (database, cache, etc.)
+- Returns 200 if all dependencies are ready
+- Returns 503 if any dependency is not ready
+- Kubernetes uses this to determine if pod can receive traffic
+- Example:
+  ```python
+  checks, all_ready = await services.check_readiness(request)
+  status_code = (
+      status.HTTP_200_OK if all_ready
+      else status.HTTP_503_SERVICE_UNAVAILABLE
+  )
+  ```
+
+### Liveness Check
+- Simple endpoint that always returns 200
+- Kubernetes uses this to determine if pod is alive
+- No dependency checks needed
+
+### Health Check
+- Basic health check endpoint
+- Always returns 200 with status and version
+- Used for general health monitoring
+
+## Import Patterns
+
+### Router Imports
+```python
+from fastapi import APIRouter, Request, status
+from fastapi.responses import ORJSONResponse, Response
+
+from apps.core.version import __version__
+from config.logging import get_logger
+from config.metrics import get_metrics
+from config.settings import settings
+
+from .. import schemas, services
+```
+
+### Service Imports
+```python
+from fastapi import Request
+
+from apps.core.db import check_db_health
+from config.logging import get_logger
+from config.settings import settings
+
+from ..types import (
+    CacheInfoDict,
+    ChecksDict,
+    DbHealthResult,
+    DbInfoDict,
+    EndpointDict,
+    ReadinessResult,
+)
+```
+
+### Schema Imports
+```python
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict
+```
+
+## Best Practices
+
+### ✅ DO
+- ✅ Use type aliases for all `dict[...]` and `tuple[...]` return types
+- ✅ Use `ORJSONResponse` for all JSON responses
+- ✅ Use `Response` only for Prometheus metrics
+- ✅ Check `settings.DEBUG` for debug-only endpoints
+- ✅ Check `settings.ENABLE_METRICS` for metrics endpoint
+- ✅ Use proper response models (not raw dict)
+- ✅ Export from `__init__.py` files (no code in `__init__.py`)
+- ✅ Use structured logging with keyword arguments
+- ✅ Handle exceptions gracefully in health checks
+- ✅ Return appropriate HTTP status codes (200, 503)
+
+### ❌ DON'T
+- ❌ Don't create a repository layer (not needed for this app)
+- ❌ Don't create database models (this app doesn't manage data)
+- ❌ Don't use inline `dict[...]` patterns in function signatures
+- ❌ Don't put code in `__init__.py` files
+- ❌ Don't use raw `dict` as response_model
+- ❌ Don't skip type hints
+- ❌ Don't skip docstrings
+- ❌ Don't expose sensitive information in health checks
+- ❌ Don't make health checks blocking (use timeouts)
+
+## Special Considerations
+
+### No Database Models
+- This app does NOT have a `models/` directory
+- This is intentional - the app doesn't manage any data
+- Services call core utilities directly
+
+### No Repository Layer
+- This app does NOT have a `repository/` directory
+- Services directly call core utilities (e.g., `apps.core.db.check_db_health`)
+- This is acceptable for simple utility functions
+
+### Root-Level Mounting
+- Router is mounted at root level (no `/common` prefix)
+- Endpoints are directly accessible: `/health`, `/ready`, etc.
+- This is intentional for system endpoints
+
+### Conditional Endpoints
+- Some endpoints are only registered conditionally
+- Use `if settings.DEBUG:` for debug-only endpoints
+- Use `if settings.ENABLE_METRICS:` for metrics endpoint
+- Document in endpoint description that it's conditional
+
+## Example: Adding a New Health Check
+
+### 1. Add Type Alias (if needed)
+```python
+# apps/common/types.py
+NewServiceInfoDict: TypeAlias = dict[str, Any]
+NewServiceHealthResult: TypeAlias = tuple[bool, NewServiceInfoDict]
+```
+
+### 2. Add Service Function
+```python
+# apps/common/services/common_service.py
+from ..types import NewServiceHealthResult, NewServiceInfoDict
+
+async def get_new_service_health(request: Request) -> NewServiceHealthResult:
+    """Get new service health status.
+
+    Args:
+        request: FastAPI request object
+
+    Returns:
+        Tuple of (is_healthy boolean, service info dictionary)
+    """
+    # Check service health
+    is_healthy = await check_new_service_health(request.app)
+    service_info: NewServiceInfoDict = {
+        "enabled": settings.new_service.ENABLED,
+        "host": settings.new_service.HOST,
+    }
+    return is_healthy, service_info
+```
+
+### 3. Add Schema (if needed)
+```python
+# apps/common/schemas/schema.py
+class NewServiceHealthResponse(BaseModel):
+    """New service health response model."""
+
+    model_config = ConfigDict(from_attributes=True)
+    status: str
+    service: dict[str, Any]
+```
+
+### 4. Add Router Endpoint
+```python
+# apps/common/routers/router.py
+@router.get(
+    "/health/new-service",
+    status_code=status.HTTP_200_OK,
+    summary="New service health check",
+    description="New service connection health check",
+)
+async def health_new_service(request: Request) -> ORJSONResponse:
+    """New service health check endpoint."""
+    if not settings.new_service.ENABLED:
+        return ORJSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={
+                "status": "disabled",
+                "message": "New service is not enabled",
+            },
+        )
+
+    is_healthy, service_info = await services.get_new_service_health(request)
+    status_code = (
+        status.HTTP_200_OK if is_healthy
+        else status.HTTP_503_SERVICE_UNAVAILABLE
+    )
+
+    return ORJSONResponse(
+        status_code=status_code,
+        content={
+            "status": "healthy" if is_healthy else "unhealthy",
+            "service": service_info,
+        },
+    )
+```
+
+### 5. Update Readiness Check (if needed)
+```python
+# apps/common/services/common_service.py
+async def check_readiness(request: Request) -> ReadinessResult:
+    checks: ChecksDict = {}
+    all_ready = True
+
+    # ... existing checks ...
+
+    # Check new service if enabled
+    if settings.new_service.ENABLED:
+        try:
+            service_ready, _ = await get_new_service_health(request)
+            checks["new_service"] = service_ready
+            if not service_ready:
+                all_ready = False
+        except Exception:
+            checks["new_service"] = False
+            all_ready = False
+
+    return checks, all_ready
+```
+
+## Testing Considerations
+
+### Health Check Tests
+- Test that health checks return correct status codes
+- Test that readiness check returns 503 when dependencies are down
+- Test that liveness check always returns 200
+- Test conditional endpoints (metrics, debug endpoints)
+
+### Service Tests
+- Test service functions with mocked dependencies
+- Test error handling in health checks
+- Test configuration gathering functions
+
+## Summary
+
+The `apps/common` app is a special app that provides system-level endpoints. It:
+- Has no database models or repository layer
+- Uses simple service functions that call core utilities
+- Provides health, liveness, readiness, version, and metrics endpoints
+- Is mounted at root level (no prefix)
+- Uses type aliases for all complex return types
+- Follows all project rules (no code in `__init__.py`, proper type hints, etc.)

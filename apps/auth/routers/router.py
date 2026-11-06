@@ -1,12 +1,20 @@
-"""Main auth router."""
+"""Auth router: mounts the provider selected by ``auth.MODE`` under ``/auth``.
+
+- ``sso``: Keycloak login/OTP, refresh, logout, me, and identity admin endpoints.
+- ``jwt``: local register, login, refresh, and me.
+
+Auth is internal-only, so it is not URI-versioned (see api-versioning rule).
+"""
 
 from fastapi import APIRouter
 
-from .login import router as login_router
-from .user import router as user_router
+from ..config import AuthMode, get_auth_mode
 
 router = APIRouter()
-router.include_router(login_router)
-router.include_router(user_router)
 
-__all__ = ["router"]
+if get_auth_mode() is AuthMode.JWT:
+    from ..jwt.routers.router import router as provider_router
+else:
+    from ..keycloak.routers.router import router as provider_router
+
+router.include_router(provider_router)

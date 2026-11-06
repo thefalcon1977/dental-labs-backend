@@ -1,5 +1,1 @@
-"""Auth route exports."""
-
-from .router import router
-
-__all__ = ["router"]
+"""Auth routers."""

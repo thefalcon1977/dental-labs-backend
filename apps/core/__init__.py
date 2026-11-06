@@ -26,6 +26,13 @@ Modules:
 """
 
 __all__ = [
+    "app_factory",
+    "cli",
     "db",
+    "exceptions",
+    "models",
+    "system_info",
     "version",
+    "types",
+    "utils",
 ]

@@ -65,9 +65,6 @@ validators = [
             "Origin",
             "Cache-Control",
             "Pragma",
-            "X-API-Key",
-            "X-System-User",
-            "X-System-Secret",
         ],
         cast=list,
     ),
@@ -147,20 +144,6 @@ validators = [
     Validator("redis.SOCKET_CONNECT_TIMEOUT", default=5, cast=int, gte=1),
     Validator("redis.RETRY_ON_TIMEOUT", default=True, cast=bool),
     Validator("redis.MAX_CONNECTIONS", default=50, cast=int, gte=1),
-    # Local Auth Configuration
-    Validator("auth.ALGORITHM", default="HS256", cast=str, is_in=["HS256"]),
-    Validator(
-        "auth.ACCESS_TOKEN_EXPIRE_MINUTES",
-        default=30,
-        cast=int,
-        gte=1,
-        lte=1440,
-    ),
-    Validator("auth.ISSUER", default="dental-labs-backend", cast=str),
-    Validator("auth.AUDIENCE", default="dental-labs-api", cast=str),
-    Validator("auth.PASSWORD_MIN_LENGTH", default=8, cast=int, gte=8, lte=128),
-    Validator("auth.ALLOW_REGISTRATION", default=True, cast=bool),
-    Validator("auth.REQUIRE_EMAIL_VERIFICATION", default=False, cast=bool),
     # Auth OTP (two-step login)
     Validator("auth.OTP_ENABLED", default=False, cast=bool),
     Validator("auth.OTP_SESSION_TTL_SECONDS", default=300, cast=int, gte=60, lte=900),
@@ -184,6 +167,41 @@ validators = [
         condition=lambda v: not v or _is_valid_http_url(str(v)),
     ),
     Validator("auth.OTP_PLATFORM_NAME", default="iTicket", cast=str),
+    Validator("auth.ENABLED", default=True, cast=bool),
+    Validator(
+        "auth.MODE",
+        default="sso",
+        cast=lambda v: str(v).lower(),
+        is_in=["sso", "jwt"],
+    ),
+    # Local JWT mode
+    Validator("auth.JWT_SECRET_KEY", default=None),
+    Validator(
+        "auth.JWT_SECRET_KEY",
+        len_min=32,
+        when=Validator("auth.JWT_SECRET_KEY", must_exist=True, ne=None),
+    ),
+    Validator(
+        "auth.JWT_ALGORITHM",
+        default="HS256",
+        cast=str,
+        is_in=["HS256", "HS384", "HS512"],
+    ),
+    Validator("auth.JWT_ISSUER", default="microservice-fastapi-template", cast=str),
+    Validator(
+        "auth.JWT_ACCESS_TOKEN_EXPIRE_MINUTES", default=15, cast=int, gte=1, lte=1440
+    ),
+    Validator("auth.JWT_REFRESH_TOKEN_EXPIRE_DAYS", default=7, cast=int, gte=1, lte=90),
+    Validator("auth.JWT_REGISTRATION_ENABLED", default=True, cast=bool),
+    Validator("auth.JWT_DEFAULT_ROLES", default=["user"], is_type_of=list),
+    Validator(
+        "auth.JWT_ADMIN_PERMISSION",
+        default="auth:manage",
+        cast=str,
+        len_min=1,
+        len_max=150,
+    ),
+    Validator("auth.JWT_ADMIN_ROLE", default="admin", cast=str, len_min=1, len_max=100),
     # Security Configuration
     Validator("security.ENABLE_HSTS", default=False, cast=bool),
     Validator("security.HSTS_MAX_AGE", default=31536000, cast=int, gte=0),

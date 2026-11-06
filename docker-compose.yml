@@ -1,0 +1,115 @@
+version: '3.8'
+
+services:
+  # FastAPI Application Service
+  app:
+    image: microservice-fastapi-template:0.3.16
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fastapi-app
+    restart: unless-stopped
+    # Optional: copy envs/env.dev or envs/env.prod to .env, or run:
+    #   docker-compose --env-file envs/env.dev up -d
+    environment:
+      # Environment Switcher (matches settings.toml environments)
+      ENV: ${ENV:-production}
+
+      # Application Settings (matches settings.toml [default] section)
+      APP_SERVICE_NAME: ${APP_SERVICE_NAME:-microservice-fastapi-template}
+      APP_SECRET_KEY: ${APP_SECRET_KEY:-changeme-in-production-minimum-32-characters-long}
+      APP_DEBUG: ${APP_DEBUG:-false}
+      APP_LOG_LEVEL: ${APP_LOG_LEVEL:-INFO}
+      APP_HOST: ${APP_HOST:-0.0.0.0}
+      APP_PORT: ${APP_PORT:-8000}
+      APP_ENABLE_METRICS: ${APP_ENABLE_METRICS:-true}
+      APP_ALLOWED_HOSTS: ${APP_ALLOWED_HOSTS:-["*"]}
+      APP_CORS__ORIGINS: ${APP_CORS__ORIGINS:-["*"]}
+      # Metrics Authentication Configuration
+
+      APP_METRICS__AUTH_ENABLED: ${APP_METRICS__AUTH_ENABLED:-false}
+      APP_METRICS__AUTH_METHOD: ${APP_METRICS__AUTH_METHOD:-basic}
+      APP_METRICS__AUTH_USERNAME: ${APP_METRICS__AUTH_USERNAME:-prometheus}
+      APP_METRICS__AUTH_PASSWORD: ${APP_METRICS__AUTH_PASSWORD:-changeme-in-production}
+      APP_METRICS__AUTH_BEARER_TOKEN: ${APP_METRICS__AUTH_BEARER_TOKEN:-}
+
+      # Database Configuration (matches settings.toml [database] section)
+      APP_DATABASE__ENABLED: ${APP_DATABASE__ENABLED:-false}
+      APP_DATABASE__DRIVER: ${APP_DATABASE__DRIVER:-postgresql+asyncpg}
+      APP_DATABASE__HOST: ${APP_DATABASE__HOST:-postgres}
+      APP_DATABASE__PORT: ${APP_DATABASE__PORT:-5432}
+      APP_DATABASE__NAME: ${APP_DATABASE__NAME:-app_db}
+      APP_DATABASE__USER: ${APP_DATABASE__USER:-postgres}
+      APP_DATABASE__PASSWORD: ${APP_DATABASE__PASSWORD:-postgres}
+      APP_DATABASE__POOL_SIZE: ${APP_DATABASE__POOL_SIZE:-5}
+      APP_DATABASE__MAX_OVERFLOW: ${APP_DATABASE__MAX_OVERFLOW:-10}
+      APP_DATABASE__POOL_PRE_PING: ${APP_DATABASE__POOL_PRE_PING:-true}
+      APP_DATABASE__POOL_RECYCLE: ${APP_DATABASE__POOL_RECYCLE:-3600}
+      APP_DATABASE__POOL_TIMEOUT: ${APP_DATABASE__POOL_TIMEOUT:-30}
+      APP_DATABASE__ECHO: ${APP_DATABASE__ECHO:-false}
+
+      # Uvicorn Configuration (matches settings.toml [uvicorn] section)
+      APP_UVICORN__WORKERS: ${APP_UVICORN__WORKERS:-4}
+      APP_UVICORN__WORKERS_MAX: ${APP_UVICORN__WORKERS_MAX:-8}
+      APP_UVICORN__WORKER_CLASS: ${APP_UVICORN__WORKER_CLASS:-uvicorn.workers.UvicornWorker}
+      APP_UVICORN__TIMEOUT_KEEP_ALIVE: ${APP_UVICORN__TIMEOUT_KEEP_ALIVE:-5}
+      APP_UVICORN__LIMIT_CONCURRENCY: ${APP_UVICORN__LIMIT_CONCURRENCY:-1000}
+      APP_UVICORN__LIMIT_MAX_REQUESTS: ${APP_UVICORN__LIMIT_MAX_REQUESTS:-50000}
+      APP_UVICORN__LIMIT_MAX_REQUESTS_JITTER: ${APP_UVICORN__LIMIT_MAX_REQUESTS_JITTER:-5000}
+      APP_UVICORN__BACKLOG: ${APP_UVICORN__BACKLOG:-2048}
+
+      # Redis Configuration (matches settings.toml [redis] section)
+      APP_REDIS__ENABLED: ${APP_REDIS__ENABLED:-false}
+      APP_REDIS__HOST: ${APP_REDIS__HOST:-redis}
+      APP_REDIS__PORT: ${APP_REDIS__PORT:-6379}
+      APP_REDIS__DB: ${APP_REDIS__DB:-0}
+      APP_REDIS__PASSWORD: ${APP_REDIS__PASSWORD:-}
+      APP_REDIS__SSL: ${APP_REDIS__SSL:-false}
+      APP_REDIS__SOCKET_TIMEOUT: ${APP_REDIS__SOCKET_TIMEOUT:-5}
+      APP_REDIS__SOCKET_CONNECT_TIMEOUT: ${APP_REDIS__SOCKET_CONNECT_TIMEOUT:-5}
+      APP_REDIS__RETRY_ON_TIMEOUT: ${APP_REDIS__RETRY_ON_TIMEOUT:-true}
+      APP_REDIS__MAX_CONNECTIONS: ${APP_REDIS__MAX_CONNECTIONS:-50}
+
+      # Auth OTP (two-step login) — requires Redis enabled
+      APP_AUTH__OTP_ENABLED: ${APP_AUTH__OTP_ENABLED:-false}
+      APP_AUTH__OTP_SESSION_TTL_SECONDS: ${APP_AUTH__OTP_SESSION_TTL_SECONDS:-300}
+      APP_AUTH__OTP_MAX_ATTEMPTS: ${APP_AUTH__OTP_MAX_ATTEMPTS:-5}
+      APP_AUTH__OTP_VALIDITY_SECONDS: ${APP_AUTH__OTP_VALIDITY_SECONDS:-120}
+      APP_AUTH__OTP_RATE_LIMIT_LOGIN_PER_MIN: ${APP_AUTH__OTP_RATE_LIMIT_LOGIN_PER_MIN:-10}
+      APP_AUTH__OTP_RATE_LIMIT_VERIFY_PER_MIN: ${APP_AUTH__OTP_RATE_LIMIT_VERIFY_PER_MIN:-20}
+      APP_AUTH__OTP_RESEND_MAX_PER_SESSION: ${APP_AUTH__OTP_RESEND_MAX_PER_SESSION:-3}
+      APP_AUTH__OTP_RESEND_WINDOW_SECONDS: ${APP_AUTH__OTP_RESEND_WINDOW_SECONDS:-900}
+      APP_AUTH__OTP_SMS_MOCK_ENABLED: ${APP_AUTH__OTP_SMS_MOCK_ENABLED:-true}
+      APP_AUTH__OTP_SMS_URL: ${APP_AUTH__OTP_SMS_URL:-}
+      APP_AUTH__OTP_PLATFORM_NAME: ${APP_AUTH__OTP_PLATFORM_NAME:-iTicket}
+      APP_AUTH__OTP_BYPASS_ENABLED: ${APP_AUTH__OTP_BYPASS_ENABLED:-false}
+      APP_AUTH__OTP_BYPASS_CODE: ${APP_AUTH__OTP_BYPASS_CODE:-111111}
+
+      # Swagger
+      APP_OPENAPI_DOCS_ACCESS: ${APP_OPENAPI_DOCS_ACCESS:-public}
+
+      # Keycloak Configuration (matches settings.toml [keycloak] section)
+      APP_KEYCLOAK__ENABLED: ${APP_KEYCLOAK__ENABLED:-true}
+      APP_KEYCLOAK__SERVER_URL: ${APP_KEYCLOAK__SERVER_URL:-http://localhost:8080}
+      APP_KEYCLOAK__REALM: ${APP_KEYCLOAK__REALM:-master}
+      APP_KEYCLOAK__CLIENT_ID: ${APP_KEYCLOAK__CLIENT_ID:-your-client-id}
+      APP_KEYCLOAK__CLIENT_SECRET: ${APP_KEYCLOAK__CLIENT_SECRET:-your-client-secret}
+      APP_KEYCLOAK__ADMIN_USERNAME: ${APP_KEYCLOAK__ADMIN_USERNAME:-admin}
+      APP_KEYCLOAK__ADMIN_PASSWORD: ${APP_KEYCLOAK__ADMIN_PASSWORD:-admin}
+      APP_KEYCLOAK__AUDIENCE: ${APP_KEYCLOAK__AUDIENCE:-workflow-identity-client}
+      APP_KEYCLOAK__AUDIENCE_VALIDATION_ENABLED: ${APP_KEYCLOAK__AUDIENCE_VALIDATION_ENABLED:-true}
+
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  app-network:
+    driver: bridge
